@@ -8,13 +8,12 @@ import io
 st.set_page_config(layout="wide", page_title="Chart Master Web")
 
 REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-Kropka (-.)"]
-LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
+LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)" : "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
 DEFAULT_REF_LINE_STYLE = "Ciągła (-)" 
 DEFAULT_REF_LINE_WIDTH = 1.0
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)]
-# Lista opcji dla liczby punktów (od 1 do 50)
 POINTS_OPTIONS = list(range(1, 51))
 
 # Znaki specjalne do skopiowania
@@ -40,7 +39,6 @@ SPECIAL_SYMBOLS = {
 
 # --- 2. ZARZĄDZANIE STANEM ---
 
-# Inicjalizacja stanu bazowego dla dynamicznej tabeli
 if 'num_series' not in st.session_state:
     st.session_state.num_series = 1
 if 'num_points' not in st.session_state:
@@ -72,10 +70,7 @@ def process_uploaded_file(uploaded_file):
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file)
         
-        # Zmiana nazw kolumn na stringi
         df.columns = [str(c) for c in df.columns]
-        
-        # Ograniczenie kolumn Y do max 10
         if len(df.columns) > 11:
             df = df.iloc[:, :11]
 
@@ -85,12 +80,8 @@ def process_uploaded_file(uploaded_file):
         return None
 
 def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
-    """
-    Generuje figurę Matplotlib.
-    export_mode: None (ekran), 'print_color' (białe tło), 'print_bw' (czarno-białe)
-    """
+    """Generuje figurę Matplotlib."""
     
-    # Ustawienia kolorów w zależności od trybu
     if export_mode in ['print_color', 'print_bw']:
         bg_color = "white"
         text_color = "black"
@@ -105,25 +96,18 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     
     # === KONFIGURACJA OSI (0,0) ===
     if config['origin_at_zero']:
-        # Ustawienie osi na przecinanie w (0,0)
         ax.spines['left'].set_position('zero')
         ax.spines['bottom'].set_position('zero')
-        # Ukrycie górnej i prawej osi dla "czystszego" wykresu
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
-        # Kolory osi
         for spine in ax.spines.values():
             spine.set_color(text_color)
     else:
-        # Standardowe osie
         ax.spines['right'].set_visible(True)
         ax.spines['top'].set_visible(True)
-        # Ustawienie kolorów dla standardowych osi
         for spine in ax.spines.values():
             spine.set_color(text_color)
 
-
-    # Style osi (dla wszystkich stylów)
     ax.tick_params(colors=text_color)
     ax.yaxis.label.set_color(text_color)
     ax.xaxis.label.set_color(text_color)
@@ -135,7 +119,6 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     for i, col in enumerate(y_cols):
         if col not in df.columns: continue
         
-        # Pobranie konfiguracji (jeśli brak, użyj domyślnej)
         cfg = st.session_state.series_config.get(col, {
             'color': color_cycle[i % len(color_cycle)], 
             'alias': col
@@ -144,10 +127,9 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
         
         if export_mode == 'print_bw':
             color = 'black'
-            linestyle = ['-', '--', ':', '-.'][i % 4] # Różne linie dla B&W
+            linestyle = ['-', '--', ':', '-.'][i % 4] 
         else:
             color = cfg['color']
-            # Użyj symbolu Matplotlib, nie tekstu
             linestyle = LINE_STYLE_MAP.get(config['line_style'], '-') 
 
         if config['type'] == "Liniowy":
@@ -161,9 +143,7 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
 
     # 2. LINIE REFERENCYJNE
     for line in st.session_state.ref_lines:
-        # Zabezpieczenie przed brakiem kluczy po starej konfiguracji
         l_color = 'black' if export_mode == 'print_bw' else line.get('color', DEFAULT_REF_LINE_COLOR)
-        # Konwersja przyjaznej nazwy na symbol Matplotlib
         l_style = LINE_STYLE_MAP.get(line.get('style', DEFAULT_REF_LINE_STYLE), '-')
         l_width = line.get('width', DEFAULT_REF_LINE_WIDTH)
         
@@ -208,17 +188,16 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     fig.tight_layout()
     return fig
 
-# Funkcja pomocnicza do pobierania pliku
 def get_image_download_link(fig, format, mode, label, file_prefix):
+    """Obsługuje eksport wykresu."""
     buf = io.BytesIO()
-    # Generujemy NOWĄ figurę specjalnie dla eksportu
     fig_export = create_chart_figure(st.session_state.df_chart, 
                                      st.session_state.x_col, 
                                      st.session_state.y_cols, 
                                      st.session_state.chart_config, 
                                      export_mode=mode)
     fig_export.savefig(buf, format=format, dpi=300)
-    plt.close(fig_export) # Ważne: zamykamy figurę, żeby zwolnić pamięć
+    plt.close(fig_export) 
     buf.seek(0)
     return st.download_button(
         label=label,
@@ -242,7 +221,6 @@ with st.sidebar:
         if uploaded_file:
             df_new = process_uploaded_file(uploaded_file)
             if df_new is not None: 
-                # W przypadku wczytania pliku, resetujemy stan i dostosowujemy rozmiar
                 st.session_state.df = df_new
                 st.session_state.annotations = []
                 st.session_state.ref_lines = []
@@ -254,20 +232,18 @@ with st.sidebar:
     # --- 2. Konfiguracja Danych ---
     st.header("2. Konfiguracja Danych")
     
-    # Etykiety Osi (Przeniesione)
+    # Etykiety Osi (Przeniesione na początek sekcji 2)
     x_label = st.text_input("Etykieta Osi X", value="", placeholder="Kolumna X", key='sel_xlabel')
     y_label = st.text_input("Etykieta Osi Y", value="", placeholder="Wartość Y", key='sel_ylabel')
     st.markdown("---")
     
-    # Liczba Serii (Y)
+    # Rozmiar danych
     num_series_input = st.selectbox("Liczba Serii (Y)", list(range(1, 11)), index=st.session_state.num_series - 1, key='sel_num_series')
     
-    # Liczba Punktów Danych (X) jako selectbox (ZMIANA)
-    # Wyszukujemy indeks dla aktualnej liczby punktów, aby zachować stan
     try:
         current_index = POINTS_OPTIONS.index(st.session_state.num_points)
     except ValueError:
-        current_index = 4 # Domyślna wartość 5
+        current_index = POINTS_OPTIONS.index(5)
         
     num_points_input = st.selectbox("Liczba Punktów Danych (X)", POINTS_OPTIONS, index=current_index, key='sel_num_points')
     
@@ -280,41 +256,33 @@ with st.sidebar:
         current_cols = ['X'] + SERIES_NAMES[:st.session_state.num_series]
         old_df = st.session_state.df
         
-        # Tworzenie nowej ramki danych, przenosząc stare dane
         new_df = pd.DataFrame(index=range(st.session_state.num_points))
         
-        # Transfer i inicjalizacja danych
         for col in current_cols:
             if col in old_df.columns:
-                series_data = old_df[col]
+                series_data = old_df[col].astype(float)
             else:
-                series_data = pd.Series(np.zeros(len(old_df)))
+                series_data = pd.Series(np.zeros(len(old_df))).astype(float)
             
-            # Wypełnienie lub skrócenie serii do nowej liczby punktów (NAPRAWA BŁĘDU .head())
+            # Wypełnienie lub skrócenie serii do nowej liczby punktów (Poprawiona stabilność)
             if len(series_data) < st.session_state.num_points:
-                 # Dodajemy brakujące zera
                  missing_rows = st.session_state.num_points - len(series_data)
-                 new_data = pd.concat([series_data, pd.Series(np.zeros(missing_rows))], ignore_index=True)
+                 new_data = pd.concat([series_data, pd.Series(np.zeros(missing_rows)).astype(float)], ignore_index=True)
             else:
-                # Skracamy serię do nowej liczby punktów
                 new_data = series_data.head(st.session_state.num_points)
             
-            # Zapewnienie, że kolumna jest typu float
             new_df[col] = new_data.fillna(0).astype(float)
         
-        # Automatyczne uzupełnienie kolumny X jeśli pusta lub 0
         if (new_df['X'] == 0).all() or len(new_df['X']) != st.session_state.num_points:
              new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
             
         st.session_state.df = new_df
         st.rerun()
 
-    # Zabezpieczenie przed brakiem danych
     if st.session_state.df.empty:
         st.warning("Brak danych. Dodaj punkty danych.")
         st.stop()
         
-    # Ustalenie kolumn dla wykresu
     x_col = 'X'
     y_cols = SERIES_NAMES[:st.session_state.num_series]
 
@@ -325,11 +293,11 @@ with st.sidebar:
     # Opcja dla (0,0)
     origin_at_zero = st.checkbox("Oś w Punkcie (0,0)", False, key='sel_origin')
     
-    # Granice i Etykiety (Przeniesione)
+    # Granice Osi (Przeniesione do sekcji 3)
     st.markdown("---")
     st.subheader("Granice Osi")
     c1, c2 = st.columns(2)
-    # Zmieniona precyzja na 5 miejsc (lub brak formatowania)
+    # Zmieniona precyzja na %f (pełna precyzja)
     xm = c1.number_input("X Min", value=None, key='sel_xmin', format="%f")
     xM = c2.number_input("X Max", value=None, key='sel_xmax', format="%f")
     ym = c1.number_input("Y Min", value=None, key='sel_ymin', format="%f")
@@ -349,14 +317,14 @@ with st.sidebar:
     log_x = c5.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
     log_y = c6.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
 
-    # Przycisk Znaków Specjalnych (ZMIANA)
+    # Przycisk Znaków Specjalnych
     with st.expander("✨ Znaki Specjalne i Symbole"):
         st.markdown("Kliknij, aby skopiować symbol:")
         for category, symbols in SPECIAL_SYMBOLS.items():
             st.subheader(category)
             cols = st.columns(5)
             for i, (name, symbol) in enumerate(symbols.items()):
-                # Używamy st.button z tooltipem i kopiowaniem do schowka (dostępne w Streamlit >= 1.25)
+                # Używamy st.button z tooltipem i kopiowaniem do schowka
                 cols[i%5].button(symbol, help=f"Kopiuj: {name} ({symbol})", key=f"sym_{name}", on_click=lambda s=symbol: st.toast(f"Skopiowano: {s}", icon='📋'))
                 
 
@@ -367,10 +335,8 @@ if data_source == "Wpisz Ręcznie":
     with st.expander("✏️ Edytor Danych", expanded=True):
         st.write(f"Wprowadź dane dla **{st.session_state.num_points}** punktów i **{st.session_state.num_series}** serii.")
         
-        # Używamy st.form, aby uniknąć restartów przy wpisywaniu wartości
         with st.form("manual_data_form"):
             
-            # Nagłówki
             header_cols = st.columns([1] + [1] * st.session_state.num_series)
             header_cols[0].markdown("**X**")
             for i in range(st.session_state.num_series):
@@ -378,34 +344,32 @@ if data_source == "Wpisz Ręcznie":
                 
             new_df_data = {}
 
-            # Wiersze inputów
             for r in range(st.session_state.num_points):
                 row_cols = st.columns([1] + [1] * st.session_state.num_series)
                 
-                # Kolumna X (Zmieniona precyzja)
+                # Kolumna X (Pełna precyzja)
                 new_x = row_cols[0].number_input(
                     f"X_{r}", 
                     value=float(st.session_state.df.loc[r, x_col]), 
                     key=f"data_X_{r}", 
-                    format="%f", # Brak limitu miejsc po przecinku
+                    format="%f", 
                     label_visibility="collapsed"
                 )
                 new_df_data[(r, x_col)] = new_x
 
-                # Kolumny Y (Zmieniona precyzja)
+                # Kolumny Y (Pełna precyzja)
                 for c_idx in range(st.session_state.num_series):
                     y_col = y_cols[c_idx]
                     new_y = row_cols[c_idx + 1].number_input(
                         f"{y_col}_{r}", 
                         value=float(st.session_state.df.loc[r, y_col]), 
                         key=f"data_{y_col}_{r}", 
-                        format="%f", # Brak limitu miejsc po przecinku
+                        format="%f", 
                         label_visibility="collapsed"
                     )
                     new_df_data[(r, y_col)] = new_y
 
             if st.form_submit_button("Zastosuj Wprowadzone Dane (Wymagane!)"):
-                # Aktualizacja DataFrame w session state
                 temp_df = st.session_state.df.copy()
                 for (r, col), val in new_df_data.items():
                     temp_df.loc[r, col] = val
@@ -416,7 +380,6 @@ if data_source == "Wpisz Ręcznie":
             st.info("UWAGA: Aby zmiany zostały zastosowane, **MUSISZ** kliknąć przycisk 'Zastosuj Wprowadzone Dane'.")
 
 
-# Konfiguracja do rysowania (Zbieranie wszystkich ustawień)
 chart_config = {
     'type': chart_type, 'line_style': line_style, 'width': line_width, 'markers': show_markers,
     'log_x': log_x, 'log_y': log_y, 'grid': show_grid,
@@ -427,7 +390,6 @@ chart_config = {
     'origin_at_zero': origin_at_zero
 }
 
-# Zapisanie aktualnych danych i konfiguracji do stanu sesji dla funkcji eksportu
 st.session_state.df_chart = st.session_state.df.copy()
 st.session_state.x_col = x_col
 st.session_state.y_cols = y_cols
@@ -444,7 +406,6 @@ with col_tools:
         default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         
         for i, col in enumerate(y_cols):
-            # Ustawienie domyślnej konfiguracji, jeśli jej brakuje
             if col not in st.session_state.series_config:
                  st.session_state.series_config[col] = {
                      'color': default_colors[i % len(default_colors)], 
@@ -453,34 +414,31 @@ with col_tools:
             
             cfg = st.session_state.series_config[col]
             
-            st.caption(f"Seria **{col}** (Wykres: {cfg['alias']})")
-            c1_s, c2_s = st.columns([1, 2])
+            st.caption(f"Seria **{col}**")
+            # Używamy st.container z obramowaniem do wizualnego oddzielenia
+            with st.container(border=True):
+                c1_s, c2_s = st.columns([1, 2])
+                
+                new_color = c1_s.color_picker("Kolor", cfg['color'], key=f"color_{col}")
+                new_alias = c2_s.text_input("Alias", cfg['alias'], key=f"alias_{col}")
             
-            # Kolor
-            new_color = c1_s.color_picker("Kolor", cfg['color'], key=f"color_{col}", label_visibility="collapsed")
-            
-            # Alias
-            new_alias = c2_s.text_input("Nazwa", cfg['alias'], key=f"alias_{col}", label_visibility="collapsed")
-            
-            # Update if changed
             if new_color != cfg['color'] or new_alias != cfg['alias']:
                 st.session_state.series_config[col]['color'] = new_color
                 st.session_state.series_config[col]['alias'] = new_alias
-                st.rerun() # Wymuszamy rerun, aby kolor/alias na wykresie się zaktualizował
+                st.rerun() 
 
-    # A. ZARZĄDZANIE ADNOTACJAMI (Użycie data_editor jest stabilne dla małych list słowników)
+    # A. ZARZĄDZANIE ADNOTACJAMI (NOWA WERSJA)
     with st.expander("📝 Adnotacje", expanded=True):
+        # ... Formularz dodawania bez zmian
         if not st.session_state.df_chart.empty and len(y_cols)>0:
             def_x = float(st.session_state.df_chart[x_col].mean())
             def_y = float(st.session_state.df_chart[y_cols[0]].mean())
         else:
              def_x, def_y = 0.0, 0.0
         
-        # Formularz dodawania
         with st.form("new_note"):
             st.write("Dodaj nową:")
             c1_n, c2_n = st.columns(2)
-            # Zmieniona precyzja
             new_x = c1_n.number_input("Poz X", value=def_x, key="nx", format="%f") 
             new_y = c2_n.number_input("Poz Y", value=def_y, key="ny", format="%f")
             new_txt = st.text_input("Tekst", "Punkt A")
@@ -489,65 +447,120 @@ with col_tools:
                 st.session_state.annotations.append({'x': new_x, 'y': new_y, 'text': new_txt})
                 st.rerun()
 
-        # Lista edycji istniejących
+        # Dynamiczna lista edycji/usuwania (NOWY MECHANIZM)
         if st.session_state.annotations:
             st.write("**Edytuj/Usuń:**")
-            edited_notes = st.data_editor(
-                st.session_state.annotations,
-                column_config={
-                    # Zmieniona precyzja
-                    "x": st.column_config.NumberColumn("Poz X", format="%f"), 
-                    "y": st.column_config.NumberColumn("Poz Y", format="%f"),
-                    "text": st.column_config.TextColumn("Tekst"),
-                },
-                num_rows="dynamic",
-                hide_index=True,
-                key="notes_editor"
-            )
-            if edited_notes != st.session_state.annotations:
-                 st.session_state.annotations = edited_notes
-                 st.rerun() 
+            
+            notes_to_keep = []
+            rerun_needed = False
+            
+            for i, note in enumerate(st.session_state.annotations):
+                st.caption(f"Adnotacja **#{i+1}**")
+                
+                with st.container(border=True): 
+                    col_x, col_y, col_del = st.columns([1.5, 1.5, 0.5])
+                    
+                    new_x = col_x.number_input("X:", value=note['x'], key=f"an_x_{i}", format="%f")
+                    new_y = col_y.number_input("Y:", value=note['y'], key=f"an_y_{i}", format="%f")
+
+                    # Przycisk usuwania
+                    if col_del.button("❌", key=f"an_del_{i}", help="Usuń adnotację"):
+                        rerun_needed = True
+                        continue 
+                    
+                    new_txt = st.text_input("Tekst Adnotacji:", value=note['text'], key=f"an_txt_{i}")
+
+                # Zbieranie zaktualizowanych danych
+                updated_note = {'x': new_x, 'y': new_y, 'text': new_txt}
+                notes_to_keep.append(updated_note)
+                
+                # Oznacz rerun jako potrzebny, jeśli wartości się zmieniły (chociaż Streamlit i tak to zrobi)
+                if updated_note != note:
+                    rerun_needed = True
+
+            # Aktualizacja stanu tylko jeśli zaszło usunięcie
+            if rerun_needed or len(notes_to_keep) != len(st.session_state.annotations):
+                 st.session_state.annotations = notes_to_keep
+                 st.rerun()
+            else:
+                 # Aktualizacja stanu dla zmian wprowadzonych w inputach
+                 st.session_state.annotations = notes_to_keep
+
                  
-    # B. LINIE REFERENCYJNE (Użycie data_editor jest stabilne dla małych list słowników)
+    # B. LINIE REFERENCYJNE (NOWA WERSJA)
     with st.expander("📏 Linie Referencyjne", expanded=True):
+        # ... Formularz dodawania bez zmian
         with st.form("new_line"):
             l_ax = st.selectbox("Oś", ["X", "Y"])
-            # Zmieniona precyzja
-            l_val = st.number_input("Wartość", value=0.0, format="%f")
+            # Pełna precyzja
+            l_val = st.number_input("Wartość", value=0.0, format="%f") 
             l_style = st.selectbox("Styl", REF_LINE_STYLES, index=0)
             
             if st.form_submit_button("➕ Dodaj Linię"):
                 st.session_state.ref_lines.append({
                     'axis': l_ax, 
                     'value': l_val, 
-                    'color': DEFAULT_REF_LINE_COLOR, 
-                    'style': l_style, # Przechowujemy tekstową nazwę stylu
+                    'color': DEFAULT_REF_LINE_COLOR, # Domyślny kolor
+                    'style': l_style,
                     'width': DEFAULT_REF_LINE_WIDTH
                 })
                 st.rerun()
         
-        # Lista edycji
+        # Dynamiczna lista edycji/usuwania (NOWY MECHANIZM)
         if st.session_state.ref_lines:
             st.write("**Edytuj/Usuń:**")
-            edited_lines = st.data_editor(
-                st.session_state.ref_lines,
-                column_config={
-                    "axis": st.column_config.SelectboxColumn("Oś", options=["X", "Y"]),
-                    # Zmieniona precyzja
-                    "value": st.column_config.NumberColumn("Wartość", format="%f"),
-                    # Usunięto ColorPickerColumn, aby uniknąć błędu i zachować stabilność
-                    "color": st.column_config.TextColumn("Kolor (HEX)", disabled=True), # Tylko podgląd
-                    "style": st.column_config.SelectboxColumn("Styl", options=REF_LINE_STYLES, default="Ciągła (-)"),
-                    "width": st.column_config.NumberColumn("Grubość", min_value=0.5, max_value=5.0, step=0.5),
-                },
-                num_rows="dynamic",
-                hide_index=True,
-                key="lines_editor"
-            )
             
-            if edited_lines != st.session_state.ref_lines:
-                st.session_state.ref_lines = edited_lines
+            lines_to_keep = []
+            rerun_needed = False
+            
+            for i, line in enumerate(st.session_state.ref_lines):
+                st.caption(f"Linia Ref. **#{i+1}**")
+                
+                with st.container(border=True): 
+                    # Wiersz 1: Oś, Wartość, Usuwanie
+                    col_ax, col_val, col_del = st.columns([1, 2, 0.5])
+                    
+                    new_ax = col_ax.selectbox("Oś", ["X", "Y"], index=0 if line['axis'] == 'X' else 1, key=f"rl_ax_{i}")
+                    # Pełna precyzja
+                    new_val = col_val.number_input(f"{new_ax} Wartość:", value=line['value'], key=f"rl_val_{i}", format="%f")
+                    
+                    if col_del.button("❌", key=f"rl_del_{i}", help="Usuń linię"):
+                        rerun_needed = True
+                        continue 
+                        
+                    # Wiersz 2: Kolor, Styl, Grubość
+                    col_color, col_style, col_width = st.columns([1.5, 1.5, 1])
+                    
+                    new_color = col_color.color_picker("Kolor", line['color'], key=f"rl_color_{i}")
+                    
+                    try:
+                        style_index = REF_LINE_STYLES.index(line.get('style', DEFAULT_REF_LINE_STYLE))
+                    except ValueError:
+                        style_index = 0
+                        
+                    new_style = col_style.selectbox("Styl", REF_LINE_STYLES, index=style_index, key=f"rl_style_{i}")
+                    new_width = col_width.number_input("Grubość", value=line['width'], min_value=0.5, max_value=5.0, step=0.5, key=f"rl_width_{i}", format="%.1f")
+                
+                # Zbieranie zaktualizowanych danych
+                updated_line = {
+                    'axis': new_ax,
+                    'value': new_val,
+                    'color': new_color,
+                    'style': new_style,
+                    'width': new_width
+                }
+                lines_to_keep.append(updated_line)
+                
+                if updated_line != line:
+                    rerun_needed = True
+            
+            # Aktualizacja stanu tylko jeśli zaszło usunięcie
+            if rerun_needed or len(lines_to_keep) != len(st.session_state.ref_lines):
+                st.session_state.ref_lines = lines_to_keep
                 st.rerun()
+            else:
+                 # Aktualizacja stanu dla zmian wprowadzonych w inputach
+                 st.session_state.ref_lines = lines_to_keep
 
 with col_plot:
     # Tytuł Wykresu
