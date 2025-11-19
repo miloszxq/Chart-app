@@ -3,4 +3,3 @@ pandas
 matplotlib
 numpy
 openpyxl
-streamlit-matplotlib-events
