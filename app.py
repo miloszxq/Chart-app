@@ -272,12 +272,18 @@ with col_tools:
 # --- EKSPORT ---
 st.divider()
 with st.expander("💾 Eksport (Pobierz Wykres)"):
-    col_e1, col_e2 = st.columns(2)
+    # Plotly pozwala pobrać wykres jako HTML, który zachowuje interaktywność.
+    # Usunęliśmy fig.to_image, ponieważ powodowało błąd ChromeNotFoundError.
     
-    # Generowanie statycznego obrazka do pobrania (wysoka jakość)
-    img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-    pdf_bytes = fig.to_image(format="pdf", width=1200, height=800) # Plotly PDF export
+    html_bytes = fig.to_html(full_html=False).encode("utf-8")
 
-    col_e1.download_button("Pobierz PNG", data=img_bytes, file_name="wykres.png", mime="image/png")
-    col_e2.download_button("Pobierz PDF", data=pdf_bytes, file_name="wykres.pdf", mime="application/pdf")
+    st.download_button(
+        "Pobierz interaktywny HTML", 
+        data=html_bytes, 
+        file_name="wykres_interactive.html", 
+        mime="text/html"
+    )
+    
+    st.info("Plik HTML zachowuje interaktywność wykresu (zoom, tooltipy), ale nie zawiera adnotacji tekstowych wprowadzonych w Streamlit.")
+
 
