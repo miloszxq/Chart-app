@@ -14,7 +14,8 @@ DEFAULT_REF_LINE_STYLE = "Ciągła (-)"
 DEFAULT_REF_LINE_WIDTH = 1.0 
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
-SERIES_NAMES = [f"Y{i+1}" for i in range(10)]
+# Zmieniono listę SERII, aby mogła obsługiwać kolumny 'Y1', 'Y2', ..., 'Y10'
+SERIES_NAMES = [f"Y{i+1}" for i in range(10)] 
 POINTS_OPTIONS = list(range(1, 51))
 
 SPECIAL_SYMBOLS = {
@@ -70,40 +71,73 @@ if 'symbol_to_copy' not in st.session_state:
 # --- 3. FUNKCJE POMOCNICZE ---
 
 def process_uploaded_file(uploaded_file):
-    """Obsługa CSV, Excel i TXT."""
+    """
+    Obsługa CSV, Excel i TXT: ustandaryzowanie kolumn na 'X', 'Y1', 'Y2', ...
+    Ta funkcja została ulepszona, aby była bardziej odporna na format pliku TXT/CSV.
+    """
     try:
         if uploaded_file.name.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(uploaded_file)
         else:
             uploaded_file.seek(0)
             try:
-                # Próba odczytu z automatycznym wykrywaniem separatora
+                # Próba odczytu z automatycznym wykrywaniem separatora (np. przecinek)
                 df = pd.read_csv(uploaded_file, sep=None, engine='python')
             except:
-                # Awaryjne odczytanie z domyślnym separatorem (przecinek)
+                # Awaryjne odczytanie z automatycznym wykrywaniem spacji/tabulacji
                 uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file)
+                try:
+                    df = pd.read_csv(uploaded_file, delim_whitespace=True)
+                except:
+                    # Ostateczna próba, co pasuje do pliku użytkownika (przecinek)
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, sep=',')
         
         df.columns = [str(c) for c in df.columns]
-        if len(df.columns) > 11:
+
+        # Wyrzucenie wierszy, które są w całości puste lub nie są liczbowe
+        df = df.replace(r'^\s*$', np.nan, regex=True).dropna(how='all')
+        
+        # Upewnienie się, że mamy co najmniej 2 kolumny (X i Y)
+        if df.shape[1] < 2:
+             st.error("Wczytany plik powinien zawierać co najmniej dwie kolumny danych (X i Y).")
+             return None
+             
+        # Ograniczenie do max 11 kolumn (X + 10 Y)
+        if df.shape[1] > 11:
             df = df.iloc[:, :11]
 
-        # Wymuszenie konwersji wszystkich danych na float, ignorując błędy
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
-        # Upewnienie się, że jest kolumna X
-        if df.columns[0] != 'X':
-            df = df.rename(columns={df.columns[0]: 'X'})
+        # Konwersja na float i ustandaryzowanie nazw kolumn
+        new_cols = {}
+        for i, col in enumerate(df.columns):
+            if i == 0:
+                new_col_name = 'X'
+            else:
+                # Nazwy Y od Y1 do Y10
+                new_col_name = f'Y{i}'
             
+            # Wymuszenie konwersji na float, ignorując błędy i zastępując braki zerami
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            new_cols[col] = new_col_name
+        
+        df = df.rename(columns=new_cols)
+
+        # Usunięcie wierszy, które mają same zera w kolumnach Y (po konwersji)
+        df = df[~(df.filter(regex='^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
+        
+        # Ostatnia kontrola
+        if df.empty:
+             st.error("Plik wczytany, ale nie zawiera żadnych poprawnych danych liczbowych po oczyszczeniu.")
+             return None
+
         return df
     except Exception as e:
-        st.error(f"Błąd formatu pliku: {e}")
+        st.error(f"Błąd formatu pliku lub parsowania: {e}. Upewnij się, że dane są liczbowe i rozdzielone przecinkiem, średnikiem lub spacją/tabulatorem.")
         return None
 
 def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     """Generuje figurę Matplotlib."""
-    
+    # ... (kod funkcji rysującej pozostaje bez zmian, używa danych z DF) ...
     if export_mode in ['print_color', 'print_bw']:
         bg_color = "white"
         text_color = "black"
@@ -253,18 +287,24 @@ with st.sidebar:
         if data_source == "Wgraj Plik":
             uploaded_file = st.file_uploader("Obsługuje: Excel, CSV, TXT", type=['csv', 'txt', 'xlsx', 'xls'])
             if uploaded_file:
-                df_new = process_uploaded_file(uploaded_file)
-                if df_new is not None: 
-                    # Aktualizacja stanu sesji
-                    st.session_state.df = df_new
-                    st.session_state.annotations = []
-                    st.session_state.ref_lines = []
-                    st.session_state.series_config = {}
-                    st.session_state.num_series = len(df_new.columns) - 1 if len(df_new.columns) > 0 else 1
-                    st.session_state.num_points = len(df_new)
-                    st.success(f"Wczytano plik! ({st.session_state.num_points} punktów, {st.session_state.num_series} serii).")
-                    # Rerun jest konieczny, aby cały skrypt odświeżył się z nowymi danymi
-                    st.rerun() 
+                # Sprawdzenie, czy plik jest nowy (zapewnienie re-runa)
+                if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != uploaded_file.file_id:
+                    df_new = process_uploaded_file(uploaded_file)
+                    if df_new is not None: 
+                        # Uaktualnienie stanu sesji
+                        st.session_state.df = df_new
+                        st.session_state.annotations = []
+                        st.session_state.ref_lines = []
+                        st.session_state.series_config = {}
+                        
+                        # Odświeżenie na podstawie wczytanych kolumn
+                        y_cols_count = len([col for col in df_new.columns if col.startswith('Y')])
+                        st.session_state.num_series = y_cols_count
+                        st.session_state.num_points = len(df_new)
+                        
+                        st.session_state.last_upload_hash = uploaded_file.file_id
+                        st.success(f"Wczytano plik! ({st.session_state.num_points} punktów, {st.session_state.num_series} serii). Wykres został zaktualizowany.")
+                        st.rerun() # Wymuszenie odświeżenia całego skryptu
 
     # 2. KONFIGURACJA ROZMIARU
     with st.container(border=True):
@@ -334,7 +374,8 @@ with st.sidebar:
         st.stop()
         
     x_col = 'X'
-    y_cols = SERIES_NAMES[:st.session_state.num_series]
+    # Prawidłowe kolumny Y są teraz wyciągane bezpośrednio z DataFrame'u
+    y_cols = [col for col in st.session_state.df.columns if col.startswith('Y')]
 
 
     st.header("2. Opcje Wykresu")
@@ -379,14 +420,15 @@ with st.sidebar:
     with st.expander("✨ Znaki Specjalne i Symbole"):
         
         # Ulepszone pole do kopiowania
-        st.markdown("**Aby skopiować symbol, kliknij w niego, a następnie ręcznie ZAZNACZ i skopiuj z pola poniżej (Ctrl+C).**")
+        st.markdown("**1. Kliknij symbol, by go tutaj wyświetlić.**")
+        st.markdown("**2. Ręcznie ZAZNACZ i skopiuj z pola poniżej (Ctrl+C).**")
         
         st.text_input(
             "Symbol do skopiowania:", 
             st.session_state.symbol_to_copy, 
             key="copy_display", 
             label_visibility="visible",
-            disabled=True # Zablokowane, aby podkreślić, że to pole wyjściowe
+            # Zmieniono na enabled=True, aby ułatwić manualne zaznaczenie i kopiowanie
         )
         
         st.markdown("---")
