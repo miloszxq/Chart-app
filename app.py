@@ -14,37 +14,15 @@ DEFAULT_REF_LINE_STYLE = "Ciągła (-)"
 DEFAULT_REF_LINE_WIDTH = 1.0 
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
-# Zmieniono listę SERII, aby mogła obsługiwać kolumny 'Y1', 'Y2', ..., 'Y10'
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)] 
 POINTS_OPTIONS = list(range(1, 51))
 
+# ZMIANA: UPROSZCZONA STRUKTURA SYMBOLI - tylko symbole, bez pełnych nazw
 SPECIAL_SYMBOLS = {
-    "Indeksy": {
-        "Indeks Górny 1": "¹", "Indeks Górny 2": "²", "Indeks Górny 3": "³", 
-        "Indeks Górny 4": "⁴", "Indeks Górny 5": "⁵", "Indeks Górny 6": "⁶", 
-        "Indeks Górny 7": "⁷", "Indeks Górny 8": "⁸", "Indeks Górny 9": "⁹", 
-        "Indeks Górny 0": "⁰",
-        "Indeks Dolny 1": "₁", "Indeks Dolny 2": "₂", "Indeks Dolny 3": "₃", 
-        "Indeks Dolny 4": "₄", "Indeks Dolny 5": "₅", "Indeks Dolny 6": "₆", 
-        "Indeks Dolny 7": "₇", "Indeks Dolny 8": "₈", "Indeks Dolny 9": "₉",
-        "Indeks Dolny 0": "₀"
-    },
-    "Grecki": {
-        "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", 
-        "zeta": "ζ", "eta": "η", "theta": "θ", "lambda": "λ", "mu": "μ", 
-        "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ", "phi": "φ", "omega": "ω"
-    },
-    "Fizyczne": {
-        "Stopień Celsjusza": "°C", "Stopień (koło)": "°", "Delta": "Δ", 
-        "Niebieski Kropka": "•", "Ohm": "Ω", "Mikro": "μ", "Pierwiastek": "√", 
-        "Równa się": "=", "Większe/Równe": "≥", "Mniejsze/Równe": "≤", 
-        "Pribliżnie równe": "≈"
-    },
-    "Matematyczne": {
-        "Razy (x)": "×", "Podzielić (/)": "÷", "Nieskończoność": "∞", 
-        "Suma": "∑", "Całka": "∫", "Procent": "%", "Plus/Minus": "±", 
-        "Nie równa się": "≠"
-    }
+    "Indeksy": ["¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹", "⁰", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉", "₀"],
+    "Grecki": ["α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "λ", "μ", "π", "ρ", "σ", "τ", "φ", "ω"],
+    "Fizyczne": ["°C", "°", "Δ", "•", "Ω", "μ", "√", "=", "≥", "≤", "≈"],
+    "Matematyczne": ["×", "÷", "∞", "∑", "∫", "%", "±", "≠"]
 }
 
 
@@ -65,7 +43,7 @@ if 'ref_lines' not in st.session_state:
 if 'series_config' not in st.session_state:
     st.session_state.series_config = {}
 if 'symbol_to_copy' not in st.session_state:
-    st.session_state.symbol_to_copy = "Kliknij symbol, by go tutaj wyświetlić."
+    st.session_state.symbol_to_copy = "Kliknij symbol, by go tutaj wyświetlić i skopiować."
 
 
 # --- 3. FUNKCJE POMOCNICZE ---
@@ -73,7 +51,6 @@ if 'symbol_to_copy' not in st.session_state:
 def process_uploaded_file(uploaded_file):
     """
     Obsługa CSV, Excel i TXT: ustandaryzowanie kolumn na 'X', 'Y1', 'Y2', ...
-    Ta funkcja została ulepszona, aby była bardziej odporna na format pliku TXT/CSV.
     """
     try:
         if uploaded_file.name.endswith(('.xlsx', '.xls')):
@@ -81,7 +58,7 @@ def process_uploaded_file(uploaded_file):
         else:
             uploaded_file.seek(0)
             try:
-                # Próba odczytu z automatycznym wykrywaniem separatora (np. przecinek)
+                # Próba odczytu z automatycznym wykrywaniem separatora
                 df = pd.read_csv(uploaded_file, sep=None, engine='python')
             except:
                 # Awaryjne odczytanie z automatycznym wykrywaniem spacji/tabulacji
@@ -89,7 +66,7 @@ def process_uploaded_file(uploaded_file):
                 try:
                     df = pd.read_csv(uploaded_file, delim_whitespace=True)
                 except:
-                    # Ostateczna próba, co pasuje do pliku użytkownika (przecinek)
+                    # Ostateczna próba
                     uploaded_file.seek(0)
                     df = pd.read_csv(uploaded_file, sep=',')
         
@@ -98,12 +75,10 @@ def process_uploaded_file(uploaded_file):
         # Wyrzucenie wierszy, które są w całości puste lub nie są liczbowe
         df = df.replace(r'^\s*$', np.nan, regex=True).dropna(how='all')
         
-        # Upewnienie się, że mamy co najmniej 2 kolumny (X i Y)
         if df.shape[1] < 2:
              st.error("Wczytany plik powinien zawierać co najmniej dwie kolumny danych (X i Y).")
              return None
              
-        # Ograniczenie do max 11 kolumn (X + 10 Y)
         if df.shape[1] > 11:
             df = df.iloc[:, :11]
 
@@ -113,10 +88,8 @@ def process_uploaded_file(uploaded_file):
             if i == 0:
                 new_col_name = 'X'
             else:
-                # Nazwy Y od Y1 do Y10
                 new_col_name = f'Y{i}'
             
-            # Wymuszenie konwersji na float, ignorując błędy i zastępując braki zerami
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
             new_cols[col] = new_col_name
         
@@ -125,7 +98,6 @@ def process_uploaded_file(uploaded_file):
         # Usunięcie wierszy, które mają same zera w kolumnach Y (po konwersji)
         df = df[~(df.filter(regex='^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
         
-        # Ostatnia kontrola
         if df.empty:
              st.error("Plik wczytany, ale nie zawiera żadnych poprawnych danych liczbowych po oczyszczeniu.")
              return None
@@ -137,7 +109,7 @@ def process_uploaded_file(uploaded_file):
 
 def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     """Generuje figurę Matplotlib."""
-    # ... (kod funkcji rysującej pozostaje bez zmian, używa danych z DF) ...
+    
     if export_mode in ['print_color', 'print_bw']:
         bg_color = "white"
         text_color = "black"
@@ -264,8 +236,9 @@ def get_image_download_link(fig, format, mode, label, file_prefix):
 
 def set_symbol_to_copy(symbol):
     """Ustawia symbol w stanie sesji do skopiowania."""
+    # Instrukcja w toast jest teraz prostsza
     st.session_state.symbol_to_copy = symbol
-    st.toast(f"Wybrano: {symbol}. Zaznacz pole pod spodem i skopiuj.", icon='📋')
+    st.toast(f"Wybrano symbol: {symbol}.", icon='📋')
 
 
 # --- 4. INTERFEJS UŻYTKOWNIKA ---
@@ -287,24 +260,21 @@ with st.sidebar:
         if data_source == "Wgraj Plik":
             uploaded_file = st.file_uploader("Obsługuje: Excel, CSV, TXT", type=['csv', 'txt', 'xlsx', 'xls'])
             if uploaded_file:
-                # Sprawdzenie, czy plik jest nowy (zapewnienie re-runa)
                 if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != uploaded_file.file_id:
                     df_new = process_uploaded_file(uploaded_file)
                     if df_new is not None: 
-                        # Uaktualnienie stanu sesji
                         st.session_state.df = df_new
                         st.session_state.annotations = []
                         st.session_state.ref_lines = []
                         st.session_state.series_config = {}
                         
-                        # Odświeżenie na podstawie wczytanych kolumn
                         y_cols_count = len([col for col in df_new.columns if col.startswith('Y')])
                         st.session_state.num_series = y_cols_count
                         st.session_state.num_points = len(df_new)
                         
                         st.session_state.last_upload_hash = uploaded_file.file_id
                         st.success(f"Wczytano plik! ({st.session_state.num_points} punktów, {st.session_state.num_series} serii). Wykres został zaktualizowany.")
-                        st.rerun() # Wymuszenie odświeżenia całego skryptu
+                        st.rerun() 
 
     # 2. KONFIGURACJA ROZMIARU
     with st.container(border=True):
@@ -313,7 +283,6 @@ with st.sidebar:
         if is_manual_mode:
             c_size1, c_size2 = st.columns(2)
             
-            # Ręczny wybór serii
             num_series_input = c_size1.selectbox(
                 "Liczba Serii (Y)", 
                 list(range(1, 11)), 
@@ -321,7 +290,6 @@ with st.sidebar:
                 key='sel_num_series'
             )
             
-            # Ręczny wybór punktów
             try:
                 current_index = POINTS_OPTIONS.index(st.session_state.num_points)
             except ValueError:
@@ -334,7 +302,6 @@ with st.sidebar:
                 key='sel_num_points'
             )
 
-            # Logika dynamicznej aktualizacji DF (tylko w trybie ręcznym)
             if num_series_input != st.session_state.num_series or num_points_input != st.session_state.num_points:
                 st.session_state.num_series = num_series_input
                 st.session_state.num_points = num_points_input
@@ -374,7 +341,6 @@ with st.sidebar:
         st.stop()
         
     x_col = 'X'
-    # Prawidłowe kolumny Y są teraz wyciągane bezpośrednio z DataFrame'u
     y_cols = [col for col in st.session_state.df.columns if col.startswith('Y')]
 
 
@@ -420,27 +386,27 @@ with st.sidebar:
     with st.expander("✨ Znaki Specjalne i Symbole"):
         
         # Ulepszone pole do kopiowania
-        st.markdown("**1. Kliknij symbol, by go tutaj wyświetlić.**")
-        st.markdown("**2. Ręcznie ZAZNACZ i skopiuj z pola poniżej (Ctrl+C).**")
+        st.markdown("**1. Kliknij w symbol.**")
+        st.markdown("**2. Ręcznie zaznacz symbol w polu poniżej i skopiuj (Ctrl+C).**")
         
         st.text_input(
             "Symbol do skopiowania:", 
             st.session_state.symbol_to_copy, 
             key="copy_display", 
             label_visibility="visible",
-            # Zmieniono na enabled=True, aby ułatwić manualne zaznaczenie i kopiowanie
         )
         
         st.markdown("---")
         
         for category, symbols in SPECIAL_SYMBOLS.items():
             st.caption(f"**{category}**")
-            cols = st.columns(5)
+            cols = st.columns(6) # Zwiększenie liczby kolumn dla lepszego układu
             col_index = 0
-            for name, symbol in symbols.items():
-                cols[col_index%5].button(
+            for symbol in symbols:
+                # Zmieniono, aby wyświetlać sam symbol
+                cols[col_index%6].button(
                     symbol, 
-                    key=f"sym_{name}", 
+                    key=f"sym_{category}_{symbol}", 
                     on_click=set_symbol_to_copy, 
                     args=(symbol,)
                 )
