@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import io # Do obsługi zapisywania plików w pamięci
+import io
 
 # --- 1. KONFIGURACJA I STAŁE ---
 st.set_page_config(layout="wide", page_title="Chart Master Web")
@@ -14,6 +14,29 @@ DEFAULT_REF_LINE_WIDTH = 1.0
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)]
+# Lista opcji dla liczby punktów (od 1 do 50)
+POINTS_OPTIONS = list(range(1, 51))
+
+# Znaki specjalne do skopiowania
+SPECIAL_SYMBOLS = {
+    "Grecki": {
+        "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", 
+        "zeta": "ζ", "eta": "η", "theta": "θ", "lambda": "λ", "mu": "μ", 
+        "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ", "phi": "φ", "omega": "ω"
+    },
+    "Fizyczne": {
+        "Stopień Celsjusza": "°C", "Stopień (koło)": "°", "Delta": "Δ", 
+        "Niebieski Kropka": "•", "Ohm": "Ω", "Mikro": "μ", "Pierwiastek": "√", 
+        "Równa się": "=", "Większe/Równe": "≥", "Mniejsze/Równe": "≤", 
+        "Pribliżnie równe": "≈"
+    },
+    "Matematyczne": {
+        "Razy (x)": "×", "Podzielić (/)": "÷", "Nieskończoność": "∞", 
+        "Suma": "∑", "Całka": "∫", "Procent": "%", "Plus/Minus": "±", 
+        "Nie równa się": "≠"
+    }
+}
+
 
 # --- 2. ZARZĄDZANIE STANEM ---
 
@@ -231,11 +254,23 @@ with st.sidebar:
     # --- 2. Konfiguracja Danych ---
     st.header("2. Konfiguracja Danych")
     
-    # Użycie selectbox (od 1 do 10) dla liczby serii
+    # Etykiety Osi (Przeniesione)
+    x_label = st.text_input("Etykieta Osi X", value="", placeholder="Kolumna X", key='sel_xlabel')
+    y_label = st.text_input("Etykieta Osi Y", value="", placeholder="Wartość Y", key='sel_ylabel')
+    st.markdown("---")
+    
+    # Liczba Serii (Y)
     num_series_input = st.selectbox("Liczba Serii (Y)", list(range(1, 11)), index=st.session_state.num_series - 1, key='sel_num_series')
     
-    # Użycie slidera dla liczby punktów
-    num_points_input = st.slider("Liczba Punktów Danych", 1, 50, st.session_state.num_points, key='sel_num_points')
+    # Liczba Punktów Danych (X) jako selectbox (ZMIANA)
+    # Wyszukujemy indeks dla aktualnej liczby punktów, aby zachować stan
+    try:
+        current_index = POINTS_OPTIONS.index(st.session_state.num_points)
+    except ValueError:
+        current_index = 4 # Domyślna wartość 5
+        
+    num_points_input = st.selectbox("Liczba Punktów Danych (X)", POINTS_OPTIONS, index=current_index, key='sel_num_points')
+    
     
     # Dynamiczna aktualizacja DF na podstawie nowej konfiguracji rozmiaru
     if num_series_input != st.session_state.num_series or num_points_input != st.session_state.num_points:
@@ -251,18 +286,24 @@ with st.sidebar:
         # Transfer i inicjalizacja danych
         for col in current_cols:
             if col in old_df.columns:
-                series_data = old_df[col].head(st.session_state.num_points)
+                series_data = old_df[col]
             else:
-                # Domyślne dane dla nowej kolumny
-                series_data = np.zeros(st.session_state.num_points)
+                series_data = pd.Series(np.zeros(len(old_df)))
             
-            # Wypełnienie lub skrócenie serii do nowej liczby punktów
+            # Wypełnienie lub skrócenie serii do nowej liczby punktów (NAPRAWA BŁĘDU .head())
             if len(series_data) < st.session_state.num_points:
-                 series_data = pd.concat([series_data, pd.Series(np.zeros(st.session_state.num_points - len(series_data)))], ignore_index=True)
-            new_df[col] = series_data.head(st.session_state.num_points).fillna(0).astype(float)
+                 # Dodajemy brakujące zera
+                 missing_rows = st.session_state.num_points - len(series_data)
+                 new_data = pd.concat([series_data, pd.Series(np.zeros(missing_rows))], ignore_index=True)
+            else:
+                # Skracamy serię do nowej liczby punktów
+                new_data = series_data.head(st.session_state.num_points)
+            
+            # Zapewnienie, że kolumna jest typu float
+            new_df[col] = new_data.fillna(0).astype(float)
         
-        # Automatyczne uzupełnienie kolumny X jeśli pusta
-        if (new_df['X'] == 0).all():
+        # Automatyczne uzupełnienie kolumny X jeśli pusta lub 0
+        if (new_df['X'] == 0).all() or len(new_df['X']) != st.session_state.num_points:
              new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
             
         st.session_state.df = new_df
@@ -284,29 +325,40 @@ with st.sidebar:
     # Opcja dla (0,0)
     origin_at_zero = st.checkbox("Oś w Punkcie (0,0)", False, key='sel_origin')
     
-    # Styl Linii
+    # Granice i Etykiety (Przeniesione)
+    st.markdown("---")
+    st.subheader("Granice Osi")
     c1, c2 = st.columns(2)
-    line_style = c1.selectbox("Styl Linii", REF_LINE_STYLES, key='sel_l_style')
-    line_width = c2.slider("Grubość", 0.5, 5.0, 2.0, key='sel_l_width')
+    # Zmieniona precyzja na 5 miejsc (lub brak formatowania)
+    xm = c1.number_input("X Min", value=None, key='sel_xmin', format="%f")
+    xM = c2.number_input("X Max", value=None, key='sel_xmax', format="%f")
+    ym = c1.number_input("Y Min", value=None, key='sel_ymin', format="%f")
+    yM = c2.number_input("Y Max", value=None, key='sel_ymax', format="%f")
+    st.markdown("---")
+
+    # Style
+    st.subheader("Style Wykresu")
+    c3, c4 = st.columns(2)
+    line_style = c3.selectbox("Styl Linii", REF_LINE_STYLES, key='sel_l_style')
+    line_width = c4.slider("Grubość", 0.5, 5.0, 2.0, key='sel_l_width')
     show_markers = st.checkbox("Pokaż Markery (Punkty)", True, key='sel_markers')
     show_grid = st.checkbox("Siatka", True, key='sel_grid')
-
+    
     # Logarytmiczne osie
-    c3, c4 = st.columns(2)
-    log_x = c3.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
-    log_y = c4.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
+    c5, c6 = st.columns(2)
+    log_x = c5.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
+    log_y = c6.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
 
-    # Granice i Etykiety
-    with st.expander("Granice i Etykiety Osi"):
-        c1, c2 = st.columns(2)
-        xm = c1.number_input("X Min", value=None, key='sel_xmin')
-        xM = c2.number_input("X Max", value=None, key='sel_xmax')
-        ym = c1.number_input("Y Min", value=None, key='sel_ymin')
-        yM = c2.number_input("Y Max", value=None, key='sel_ymax')
-        
-        x_label = st.text_input("Etykieta Osi X", value="", placeholder=x_col, key='sel_xlabel')
-        y_label = st.text_input("Etykieta Osi Y", value="", placeholder="Wartość Y", key='sel_ylabel')
-
+    # Przycisk Znaków Specjalnych (ZMIANA)
+    with st.expander("✨ Znaki Specjalne i Symbole"):
+        st.markdown("Kliknij, aby skopiować symbol:")
+        for category, symbols in SPECIAL_SYMBOLS.items():
+            st.subheader(category)
+            cols = st.columns(5)
+            for i, (name, symbol) in enumerate(symbols.items()):
+                # Używamy st.button z tooltipem i kopiowaniem do schowka (dostępne w Streamlit >= 1.25)
+                cols[i%5].button(symbol, help=f"Kopiuj: {name} ({symbol})", key=f"sym_{name}", on_click=lambda s=symbol: st.toast(f"Skopiowano: {s}", icon='📋'))
+                
 
 # --- GŁÓWNY OBSZAR: PRZYGOTOWANIE DANYCH ---
 
@@ -330,24 +382,24 @@ if data_source == "Wpisz Ręcznie":
             for r in range(st.session_state.num_points):
                 row_cols = st.columns([1] + [1] * st.session_state.num_series)
                 
-                # Kolumna X
+                # Kolumna X (Zmieniona precyzja)
                 new_x = row_cols[0].number_input(
                     f"X_{r}", 
                     value=float(st.session_state.df.loc[r, x_col]), 
                     key=f"data_X_{r}", 
-                    format="%.2f", 
+                    format="%f", # Brak limitu miejsc po przecinku
                     label_visibility="collapsed"
                 )
                 new_df_data[(r, x_col)] = new_x
 
-                # Kolumny Y
+                # Kolumny Y (Zmieniona precyzja)
                 for c_idx in range(st.session_state.num_series):
                     y_col = y_cols[c_idx]
                     new_y = row_cols[c_idx + 1].number_input(
                         f"{y_col}_{r}", 
                         value=float(st.session_state.df.loc[r, y_col]), 
                         key=f"data_{y_col}_{r}", 
-                        format="%.2f", 
+                        format="%f", # Brak limitu miejsc po przecinku
                         label_visibility="collapsed"
                     )
                     new_df_data[(r, y_col)] = new_y
@@ -428,8 +480,9 @@ with col_tools:
         with st.form("new_note"):
             st.write("Dodaj nową:")
             c1_n, c2_n = st.columns(2)
-            new_x = c1_n.number_input("Poz X", value=def_x, key="nx", format="%.2f")
-            new_y = c2_n.number_input("Poz Y", value=def_y, key="ny", format="%.2f")
+            # Zmieniona precyzja
+            new_x = c1_n.number_input("Poz X", value=def_x, key="nx", format="%f") 
+            new_y = c2_n.number_input("Poz Y", value=def_y, key="ny", format="%f")
             new_txt = st.text_input("Tekst", "Punkt A")
             
             if st.form_submit_button("➕ Dodaj Adnotację"):
@@ -442,8 +495,9 @@ with col_tools:
             edited_notes = st.data_editor(
                 st.session_state.annotations,
                 column_config={
-                    "x": st.column_config.NumberColumn("Poz X", format="%.2f"),
-                    "y": st.column_config.NumberColumn("Poz Y", format="%.2f"),
+                    # Zmieniona precyzja
+                    "x": st.column_config.NumberColumn("Poz X", format="%f"), 
+                    "y": st.column_config.NumberColumn("Poz Y", format="%f"),
                     "text": st.column_config.TextColumn("Tekst"),
                 },
                 num_rows="dynamic",
@@ -458,7 +512,8 @@ with col_tools:
     with st.expander("📏 Linie Referencyjne", expanded=True):
         with st.form("new_line"):
             l_ax = st.selectbox("Oś", ["X", "Y"])
-            l_val = st.number_input("Wartość", value=0.0)
+            # Zmieniona precyzja
+            l_val = st.number_input("Wartość", value=0.0, format="%f")
             l_style = st.selectbox("Styl", REF_LINE_STYLES, index=0)
             
             if st.form_submit_button("➕ Dodaj Linię"):
@@ -478,8 +533,10 @@ with col_tools:
                 st.session_state.ref_lines,
                 column_config={
                     "axis": st.column_config.SelectboxColumn("Oś", options=["X", "Y"]),
-                    "value": st.column_config.NumberColumn("Wartość", format="%.2f"),
-                    "color": st.column_config.ColorPickerColumn("Kolor"),
+                    # Zmieniona precyzja
+                    "value": st.column_config.NumberColumn("Wartość", format="%f"),
+                    # Usunięto ColorPickerColumn, aby uniknąć błędu i zachować stabilność
+                    "color": st.column_config.TextColumn("Kolor (HEX)", disabled=True), # Tylko podgląd
                     "style": st.column_config.SelectboxColumn("Styl", options=REF_LINE_STYLES, default="Ciągła (-)"),
                     "width": st.column_config.NumberColumn("Grubość", min_value=0.5, max_value=5.0, step=0.5),
                 },
