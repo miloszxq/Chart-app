@@ -17,7 +17,7 @@ DARK_BACKGROUND = "#2A2A2A"
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)] 
 POINTS_OPTIONS = list(range(1, 51))
 
-# ZMIANA: UPROSZCZONA STRUKTURA SYMBOLI - tylko symbole, bez pełnych nazw
+# UPROSZCZONA STRUKTURA SYMBOLI
 SPECIAL_SYMBOLS = {
     "Indeksy": ["¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹", "⁰", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉", "₀"],
     "Grecki": ["α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "λ", "μ", "π", "ρ", "σ", "τ", "φ", "ω"],
@@ -30,11 +30,13 @@ SPECIAL_SYMBOLS = {
 
 if 'num_series' not in st.session_state:
     st.session_state.num_series = 1
+# ZMIANA: Domyślnie 1 punkt
 if 'num_points' not in st.session_state:
-    st.session_state.num_points = 5
+    st.session_state.num_points = 1
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame({"X": [float(i+1) for i in range(st.session_state.num_points)], "Y1": [10.0, 20.0, 15.0, 25.0, 30.0]})
+    # ZMIANA: Domyślna DF ma 1 punkt
+    st.session_state.df = pd.DataFrame({"X": [1.0], "Y1": [10.0]})
 
 if 'annotations' not in st.session_state:
     st.session_state.annotations = []
@@ -160,10 +162,18 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
             color = cfg['color']
             linestyle = LINE_STYLE_MAP.get(config['line_style'], '-') 
 
+        # Dodatkowa logika dla 1 punktu i/lub braku markerów
         if config['type'] == "Liniowy":
-            ax.plot(df[x_col], df[col], label=alias, color=color, 
-                    linestyle=linestyle, linewidth=config['width'], 
-                    marker='o' if config['markers'] else None)
+            # Jeśli 1 punkt i markery są wyłączone, rysujemy tylko marker, aby coś było widać.
+            # W tym przypadku, polegamy na ustawieniu 'markers' w konfiguracji.
+            if len(df) <= 1:
+                ax.plot(df[x_col], df[col], label=alias, color=color, 
+                        linestyle='None', linewidth=config['width'], 
+                        marker='o') # Zawsze pokazujemy marker dla pojedynczego punktu
+            else:
+                ax.plot(df[x_col], df[col], label=alias, color=color, 
+                        linestyle=linestyle, linewidth=config['width'], 
+                        marker='o' if config['markers'] else None)
         elif config['type'] == "Punktowy":
             ax.scatter(df[x_col], df[col], label=alias, color=color, s=30)
         elif config['type'] == "Słupkowy":
@@ -211,6 +221,7 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
     ax.set_title(config['title'])
     ax.set_xlabel(config['x_label'] if config['x_label'] else x_col)
     ax.set_ylabel(config['y_label'] if config['y_label'] else "Wartość Y")
+    # TBD: Pokaż legendę tylko, jeśli są Y lub aliasy
     if y_cols: ax.legend(facecolor=bg_color, labelcolor=text_color)
     
     fig.tight_layout()
@@ -236,10 +247,11 @@ def get_image_download_link(fig, format, mode, label, file_prefix):
 
 def set_symbol_to_copy(symbol):
     """Ustawia symbol w stanie sesji do skopiowania."""
-    # Instrukcja w toast jest teraz prostsza
     st.session_state.symbol_to_copy = symbol
     st.toast(f"Wybrano symbol: {symbol}.", icon='📋')
-
+    # Wymuszenie ponownego uruchomienia, aby st.text_area na pewno się zaktualizowało
+    # Ponowne uruchomienie jest obsługiwane przez mechanizm przycisku w Streamlit
+    # Stąd nie jest potrzebne jawne st.rerun()
 
 # --- 4. INTERFEJS UŻYTKOWNIKA ---
 
@@ -249,7 +261,6 @@ st.title("📊 Chart Master Web")
 with st.sidebar:
     st.header("1. Źródło Danych i Rozmiar")
     
-    # Ustalenie trybu
     is_manual_mode = (st.session_state.get('data_source', "Wpisz Ręcznie") == "Wpisz Ręcznie")
 
     # 1. ŹRÓDŁO DANYCH
@@ -293,7 +304,8 @@ with st.sidebar:
             try:
                 current_index = POINTS_OPTIONS.index(st.session_state.num_points)
             except ValueError:
-                current_index = POINTS_OPTIONS.index(5)
+                # Domyślny index dla 1 punktu
+                current_index = POINTS_OPTIONS.index(1)
                 
             num_points_input = c_size2.selectbox(
                 "Liczba Punktów (X)", 
@@ -379,20 +391,22 @@ with st.sidebar:
         log_x = c_log1.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
         log_y = c_log2.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
         
-        show_markers = st.checkbox("Pokaż Markery (Punkty)", True, key='sel_markers')
+        # ZMIANA: Domyślnie markery wyłączone
+        show_markers = st.checkbox("Pokaż Markery (Punkty)", False, key='sel_markers')
         show_grid = st.checkbox("Siatka", True, key='sel_grid')
     
     # ZNAKI SPECJALNE
     with st.expander("✨ Znaki Specjalne i Symbole"):
         
-        # Ulepszone pole do kopiowania
-        st.markdown("**1. Kliknij w symbol.**")
-        st.markdown("**2. Ręcznie zaznacz symbol w polu poniżej i skopiuj (Ctrl+C).**")
+        # ZMIANA: UŻYCIE ST.TEXT_AREA I NOWA INSTRUKCJA
+        st.markdown("**1. Kliknij w symbol, który chcesz skopiować.**")
+        st.markdown("**2. Symbol pojawi się poniżej. Ręcznie zaznacz go i skopiuj (Ctrl+C).**")
         
-        st.text_input(
+        st.text_area(
             "Symbol do skopiowania:", 
             st.session_state.symbol_to_copy, 
-            key="copy_display", 
+            key="copy_display_area", 
+            height=35, # Zmniejszenie wysokości do wyglądu pojedynczej linii
             label_visibility="visible",
         )
         
@@ -400,10 +414,9 @@ with st.sidebar:
         
         for category, symbols in SPECIAL_SYMBOLS.items():
             st.caption(f"**{category}**")
-            cols = st.columns(6) # Zwiększenie liczby kolumn dla lepszego układu
+            cols = st.columns(6) 
             col_index = 0
             for symbol in symbols:
-                # Zmieniono, aby wyświetlać sam symbol
                 cols[col_index%6].button(
                     symbol, 
                     key=f"sym_{category}_{symbol}", 
