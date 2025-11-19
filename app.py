@@ -205,19 +205,22 @@ with col_main:
     selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
 
     # --- LOGIKA KLIKNIĘCIA NA WYKRESIE (DODAWANIE ADNOTACJI) ---
-    # Sprawdzamy, czy użytkownik kliknął w jakiś punkt
-    if selection and len(selection["points"]) > 0:
+    # Sprawdzamy, czy użytkownik kliknął w jakiś punkt i czy struktura selection jest poprawna
+    if selection and isinstance(selection, dict) and "points" in selection and len(selection["points"]) > 0:
         point = selection["points"][0]
-        clicked_x = point["x"]
-        clicked_y = point["y"]
+        # Plotly zwraca x i y, ale czasem mogą być w innych polach w zależności od typu wykresu
+        # Używamy get() dla bezpieczeństwa
+        clicked_x = point.get("x")
+        clicked_y = point.get("y")
         
-        # Wyświetlamy formularz dodania adnotacji DOKŁADNIE w miejscu kliknięcia (logicznie)
-        with st.form(key=f"add_note_click_{clicked_x}_{clicked_y}"):
-            st.write(f"**Dodaj adnotację w punkcie:** ({clicked_x}, {clicked_y})")
-            note_text = st.text_input("Tekst", value=f"Punkt {clicked_x}")
-            if st.form_submit_button("Zapisz Adnotację"):
-                st.session_state.annotations.append({'x': clicked_x, 'y': clicked_y, 'text': note_text})
-                st.rerun()
+        if clicked_x is not None and clicked_y is not None:
+            # Wyświetlamy formularz dodania adnotacji DOKŁADNIE w miejscu kliknięcia (logicznie)
+            with st.form(key=f"add_note_click_{clicked_x}_{clicked_y}"):
+                st.write(f"**Dodaj adnotację w punkcie:** ({clicked_x}, {clicked_y})")
+                note_text = st.text_input("Tekst", value=f"Punkt {clicked_x}")
+                if st.form_submit_button("Zapisz Adnotację"):
+                    st.session_state.annotations.append({'x': clicked_x, 'y': clicked_y, 'text': note_text})
+                    st.rerun()
 
 
 with col_tools:
@@ -277,3 +280,4 @@ with st.expander("💾 Eksport (Pobierz Wykres)"):
 
     col_e1.download_button("Pobierz PNG", data=img_bytes, file_name="wykres.png", mime="image/png")
     col_e2.download_button("Pobierz PDF", data=pdf_bytes, file_name="wykres.pdf", mime="application/pdf")
+
