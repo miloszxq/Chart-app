@@ -8,7 +8,7 @@ import io
 st.set_page_config(layout="wide", page_title="Chart Master Web")
 
 REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-Kropka (-.)"]
-LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--): ": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
+LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
 WIDTH_OPTIONS = [1.0, 2.0, 3.0, 4.0, 5.0] 
 DEFAULT_REF_LINE_STYLE = "Ciągła (-)" 
 DEFAULT_REF_LINE_WIDTH = 1.0 
@@ -290,7 +290,6 @@ with st.sidebar:
             )
             
             try:
-                # Domyślny index dla 1 punktu (ZMIANA)
                 current_index = POINTS_OPTIONS.index(st.session_state.num_points)
             except ValueError:
                 current_index = POINTS_OPTIONS.index(1) 
@@ -379,31 +378,34 @@ with st.sidebar:
         log_x = c_log1.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
         log_y = c_log2.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
         
-        # Domyślnie markery wyłączone (ZMIANA)
+        # Domyślnie markery wyłączone
         show_markers = st.checkbox("Pokaż Markery (Punkty)", False, key='sel_markers')
         show_grid = st.checkbox("Siatka", True, key='sel_grid')
     
     # ZNAKI SPECJALNE
     with st.expander("✨ Znaki Specjalne i Symbole"):
         
-        # Nowe instrukcje i stałe pola tekstowe dla każdego symbolu (ZMIANA)
         st.markdown("**Kliknij w pole z symbolem, zaznacz go i skopiuj (Ctrl+C).**")
         st.markdown("---")
         
         for category, symbols in SPECIAL_SYMBOLS.items():
             st.caption(f"**{category}**")
-            # Użycie 8 małych kolumn na symbole
             num_cols = 8 
             cols = st.columns([1] * num_cols) 
             col_index = 0
             for symbol in symbols:
-                # Każdy symbol w swoim stałym, małym polu tekstowym
+                key = f"sym_input_{category}_{symbol}"
+                
+                # POPRAWKA: Jeśli użytkownik zmienił symbol, przywróć go
+                if key in st.session_state and st.session_state[key] != symbol:
+                    st.session_state[key] = symbol
+                
                 cols[col_index%num_cols].text_input(
-                    f"sym_{category}_{symbol}", 
+                    symbol, 
                     value=symbol, 
-                    key=f"sym_input_{category}_{symbol}", 
+                    key=key, 
                     label_visibility="collapsed", 
-                    max_chars=len(symbol), # Maksymalna długość symbolu
+                    max_chars=len(symbol), 
                 )
                 col_index += 1
 
@@ -433,42 +435,46 @@ with col_tools:
     st.subheader("🛠️ Edycja Elementów Wykresu")
     st.markdown("---")
 
-    # 1. EDYTOR DANYCH (Tryb ręczny)
+    # 1. EDYTOR DANYCH (Tryb ręczny) - POPRAWKA DLA MOBILNYCH
     if data_source == "Wpisz Ręcznie":
         with st.expander("✏️ Edytor Danych", expanded=True):
             st.write(f"Wprowadź dane dla **{st.session_state.num_points}** punktów i **{st.session_state.num_series}** serii.")
             
             with st.form("manual_data_form"):
                 
-                header_cols = st.columns([1] + [1] * st.session_state.num_series)
-                header_cols[0].markdown("**X**")
-                for i in range(st.session_state.num_series):
-                    header_cols[i+1].markdown(f"**{y_cols[i]}**")
-                    
                 new_df_data = {}
 
                 for r in range(st.session_state.num_points):
-                    row_cols = st.columns([1] + [1] * st.session_state.num_series)
-                    
-                    new_x = row_cols[0].number_input(
-                        f"X_{r}", 
-                        value=float(st.session_state.df.loc[r, x_col]), 
-                        key=f"data_X_{r}", 
-                        format="%f", 
-                        label_visibility="collapsed"
-                    )
-                    new_df_data[(r, x_col)] = new_x
-
-                    for c_idx in range(st.session_state.num_series):
-                        y_col = y_cols[c_idx]
-                        new_y = row_cols[c_idx + 1].number_input(
-                            f"{y_col}_{r}", 
-                            value=float(st.session_state.df.loc[r, y_col]), 
-                            key=f"data_{y_col}_{r}", 
+                    # Używamy kontenera z ramką dla jasnego grupowania wierszy (Punktów)
+                    with st.container(border=True):
+                        st.caption(f"**Punkt {r+1}**")
+                        
+                        # Utrzymujemy kolumny, ale z widocznymi etykietami (lepsze na mobilne)
+                        row_cols = st.columns([1] + [1] * st.session_state.num_series)
+                        
+                        # Kolumna X
+                        new_x = row_cols[0].number_input(
+                            f"X: Punkt {r+1}", 
+                            value=float(st.session_state.df.loc[r, x_col]), 
+                            key=f"data_X_{r}", 
                             format="%f", 
-                            label_visibility="collapsed"
+                            label_visibility="visible", # Etykieta widoczna dla lepszej czytelności na urządzeniach mobilnych
+                            help="Wartość na osi X"
                         )
-                        new_df_data[(r, y_col)] = new_y
+                        new_df_data[(r, x_col)] = new_x
+
+                        # Kolumny Y
+                        for c_idx in range(st.session_state.num_series):
+                            y_col = y_cols[c_idx]
+                            new_y = row_cols[c_idx + 1].number_input(
+                                f"{y_col}: Punkt {r+1}", 
+                                value=float(st.session_state.df.loc[r, y_col]), 
+                                key=f"data_{y_col}_{r}", 
+                                format="%f", 
+                                label_visibility="visible", # Etykieta widoczna dla lepszej czytelności na urządzeniach mobilnych
+                                help=f"Wartość Y dla serii {y_col}"
+                            )
+                            new_df_data[(r, y_col)] = new_y
 
                 if st.form_submit_button("Zastosuj Wprowadzone Dane"):
                     temp_df = st.session_state.df.copy()
