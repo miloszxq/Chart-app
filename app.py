@@ -15,8 +15,9 @@ DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
 
 # --- 2. ZARZĄDZANIE STANEM ---
-if 'data_mode' not in st.session_state:
-    st.session_state.data_mode = "manual" # 'manual' lub 'upload'
+# Stan 'data_mode' nie jest potrzebny, wystarczy sprawdzenie 'data_source'
+# if 'data_mode' not in st.session_state:
+#     st.session_state.data_mode = "manual" # 'manual' lub 'upload'
 
 if 'df' not in st.session_state:
     # Pusta ramka danych na start dla trybu manualnego
@@ -97,7 +98,7 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
             linestyle = ['-', '--', ':', '-.'][i % 4] # Różne linie dla B&W
         else:
             color = cfg['color']
-            linestyle = LINE_STYLE_MAP[config['line_style']]
+            linestyle = LINE_STYLE_MAP.get(config['line_style'], '-') # Użyj .get dla bezpieczeństwa
 
         if config['type'] == "Liniowy":
             ax.plot(df[x_col], df[col], label=alias, color=color, 
@@ -110,13 +111,15 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
 
     # 2. LINIE REFERENCYJNE
     for line in st.session_state.ref_lines:
-        l_color = 'black' if export_mode == 'print_bw' else line['color']
-        l_style = LINE_STYLE_MAP.get(line.get('style', '-'), '-')
+        # Zabezpieczenie przed brakiem kluczy po starej konfiguracji
+        l_color = 'black' if export_mode == 'print_bw' else line.get('color', DEFAULT_REF_LINE_COLOR)
+        l_style = LINE_STYLE_MAP.get(line.get('style'), DEFAULT_REF_LINE_STYLE)
+        l_width = line.get('width', DEFAULT_REF_LINE_WIDTH)
         
         if line['axis'] == 'X':
-            ax.axvline(line['value'], color=l_color, linestyle=l_style, linewidth=line['width'])
+            ax.axvline(line['value'], color=l_color, linestyle=l_style, linewidth=l_width)
         else:
-            ax.axhline(line['value'], color=l_color, linestyle=l_style, linewidth=line['width'])
+            ax.axhline(line['value'], color=l_color, linestyle=l_style, linewidth=l_width)
 
     # 3. ADNOTACJE
     for note in st.session_state.annotations:
@@ -147,11 +150,31 @@ def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
         ax.grid(False)
         
     ax.set_title(config['title'])
-    ax.set_xlabel(x_col)
+    ax.set_xlabel(config['x_label'] if config['x_label'] else x_col)
+    ax.set_ylabel(config['y_label'] if config['y_label'] else "Wartość Y")
     if y_cols: ax.legend(facecolor=bg_color, labelcolor=text_color)
     
     fig.tight_layout()
     return fig
+
+# Funkcja pomocnicza do pobierania pliku
+def get_image_download_link(fig, format, mode, label, file_prefix):
+    buf = io.BytesIO()
+    # Generujemy NOWĄ figurę specjalnie dla eksportu z odpowiednimi kolorami
+    fig_export = create_chart_figure(st.session_state.df_chart, 
+                                     st.session_state.x_col, 
+                                     st.session_state.y_cols, 
+                                     st.session_state.chart_config, 
+                                     export_mode=mode)
+    fig_export.savefig(buf, format=format, dpi=300)
+    plt.close(fig_export) # Ważne: zamykamy figurę, żeby zwolnić pamięć
+    buf.seek(0)
+    return st.download_button(
+        label=label,
+        data=buf,
+        file_name=f"{file_prefix}_{mode}.{format}" if mode else f"{file_prefix}.{format}",
+        mime=f"image/{format}"
+    )
 
 # --- 4. INTERFEJS UŻYTKOWNIKA ---
 
@@ -168,10 +191,14 @@ with st.sidebar:
         if uploaded_file:
             df_new = process_uploaded_file(uploaded_file)
             if df_new is not None: 
+                # Resetowanie stanu dla nowych danych
                 st.session_state.df = df_new
+                st.session_state.annotations = []
+                st.session_state.ref_lines = []
+                st.session_state.series_config = {}
                 st.success("Wczytano plik!")
-    else:
-        st.info("Edytuj tabelę poniżej, aby zmienić dane wykresu.")
+    # else:
+    #     st.info("Edytuj tabelę poniżej, aby zmienić dane wykresu.")
 
     st.header("2. Konfiguracja Osi")
     cols = st.session_state.df.columns.tolist()
@@ -181,98 +208,140 @@ with st.sidebar:
         st.warning("Brak danych. Dodaj kolumny w edytorze.")
         st.stop()
 
-    x_col = st.selectbox("Oś X", cols, index=0)
+    # Wybór kolumn
+    x_col = st.selectbox("Oś X", cols, index=0, key='sel_x_col')
     available_y = [c for c in cols if c != x_col]
-    y_cols = st.multiselect("Serie Y", available_y, default=available_y[:5])
+    y_cols = st.multiselect("Serie Y", available_y, default=available_y[:5], key='sel_y_cols')
     
-    scaling = st.selectbox("Skalowanie Y", ["Brak (Original)", "Normalizacja [0-1]", "Standaryzacja (Z-Score)"])
+    scaling = st.selectbox("Skalowanie Y", ["Brak (Original)", "Normalizacja [0-1]", "Standaryzacja (Z-Score)"], key='sel_scaling')
     
-    st.header("3. Styl")
-    chart_type = st.selectbox("Typ", ["Liniowy", "Punktowy", "Słupkowy"])
-    show_grid = st.checkbox("Siatka", True)
+    st.header("3. Opcje Wykresu")
+    chart_type = st.selectbox("Typ", ["Liniowy", "Punktowy", "Słupkowy"], key='sel_type')
+    show_grid = st.checkbox("Siatka", True, key='sel_grid')
     
-    # Limity Osi
-    with st.expander("Granice Osi (Limity)"):
+    # Styl Linii
+    c1, c2 = st.columns(2)
+    line_style = c1.selectbox("Styl Linii", REF_LINE_STYLES, key='sel_l_style')
+    line_width = c2.slider("Grubość", 0.5, 5.0, 2.0, key='sel_l_width')
+    show_markers = st.checkbox("Pokaż Markery (Punkty)", True, key='sel_markers')
+
+    # Logarytmiczne osie
+    c3, c4 = st.columns(2)
+    log_x = c3.checkbox("Oś X Logarytmiczna", False, key='sel_log_x')
+    log_y = c4.checkbox("Oś Y Logarytmiczna", False, key='sel_log_y')
+
+    # Granice i Etykiety
+    with st.expander("Granice i Etykiety Osi"):
         c1, c2 = st.columns(2)
-        xm = c1.number_input("X Min", value=None)
-        xM = c2.number_input("X Max", value=None)
-        ym = c1.number_input("Y Min", value=None)
-        yM = c2.number_input("Y Max", value=None)
+        xm = c1.number_input("X Min", value=None, key='sel_xmin')
+        xM = c2.number_input("X Max", value=None, key='sel_xmax')
+        ym = c1.number_input("Y Min", value=None, key='sel_ymin')
+        yM = c2.number_input("Y Max", value=None, key='sel_ymax')
+        
+        x_label = st.text_input("Etykieta Osi X", value="", placeholder=x_col, key='sel_xlabel')
+        y_label = st.text_input("Etykieta Osi Y", value="", placeholder="Wartość Y", key='sel_ylabel')
+        
 
-# --- GŁÓWNY OBSZAR ---
+# --- GŁÓWNY OBSZAR: PRZYGOTOWANIE DANYCH ---
 
-# 1. EDYTOR DANYCH (Widoczny zawsze lub tylko w trybie ręcznym)
+# 1. EDYTOR DANYCH
 if data_source == "Wpisz Ręcznie":
     with st.expander("✏️ Edytor Danych (Kliknij, aby rozwinąć)", expanded=True):
-        st.write("Możesz dodawać wiersze i edytować wartości. Zmiany od razu widać na wykresie.")
-        # data_editor pozwala na pełną edycję jak w Excelu
-        edited_df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
-        st.session_state.df = edited_df
+        st.write("Możesz dodawać wiersze i edytować wartości. Zmiany są zapisywane po zakończeniu edycji komórki.")
+        
+        # Zabezpieczenie przed błędem zacinania:
+        # 1. Używamy klucza 'data_editor_key'.
+        # 2. Porównujemy, czy edytowany DF różni się od DF w stanie sesji.
+        edited_df = st.data_editor(st.session_state.df, 
+                                   num_rows="dynamic", 
+                                   use_container_width=True, 
+                                   key="data_editor_key")
+        
+        if not edited_df.equals(st.session_state.df):
+            st.session_state.df = edited_df
+            # NIE używamy st.rerun, aby uniknąć błędów 'None'
 
-# Przygotowanie danych do wykresu
+# Przygotowanie danych do wykresu (Zawsze po edytorze)
 df_chart = st.session_state.df.copy()
+
 # Skalowanie
 if scaling != "Brak (Original)":
     for col in y_cols:
         if pd.api.types.is_numeric_dtype(df_chart[col]):
             if scaling == "Normalizacja [0-1]":
-                df_chart[col] = (df_chart[col] - df_chart[col].min()) / (df_chart[col].max() - df_chart[col].min())
+                min_val = df_chart[col].min()
+                max_val = df_chart[col].max()
+                if max_val != min_val:
+                    df_chart[col] = (df_chart[col] - min_val) / (max_val - min_val)
+                else:
+                    df_chart[col] = 0 # Zapobieganie dzieleniu przez zero
             else:
-                df_chart[col] = (df_chart[col] - df_chart[col].mean()) / df_chart[col].std()
+                std_val = df_chart[col].std()
+                if std_val != 0:
+                    df_chart[col] = (df_chart[col] - df_chart[col].mean()) / std_val
+                else:
+                    df_chart[col] = 0
 
+# Sortowanie dla liniowego/punktowego
 if not df_chart.empty and x_col in df_chart.columns and pd.api.types.is_numeric_dtype(df_chart[x_col]):
     df_chart = df_chart.sort_values(x_col)
 
-# Konfiguracja do rysowania
-chart_config = {
-    'type': chart_type, 'line_style': 'Ciągła (-)', 'width': 2.0, 'markers': True,
-    'log_x': False, 'log_y': False, 'grid': show_grid,
+# Zapisanie aktualnych danych i konfiguracji do stanu sesji dla funkcji eksportu
+st.session_state.df_chart = df_chart
+st.session_state.x_col = x_col
+st.session_state.y_cols = y_cols
+st.session_state.chart_config = {
+    'type': chart_type, 'line_style': line_style, 'width': line_width, 'markers': show_markers,
+    'log_x': log_x, 'log_y': log_y, 'grid': show_grid,
     'xlim': (xm, xM), 'ylim': (ym, yM),
-    'title': ""
+    'title': "", # Tytuł jest zarządzany poniżej w col_plot
+    'x_label': x_label,
+    'y_label': y_label
 }
 
-# --- KOLUMNY: WYKRES + NARZĘDZIA ---
-col_plot, col_tools = st.columns([3, 1])
+# --- KOLUMNY: NARZĘDZIA (LEWO) + WYKRES (PRAWO) ---
+col_tools, col_plot = st.columns([1, 3]) # ODWRÓCONA KOLEJNOŚĆ I ZMIENIONE PROPORCJE
 
 with col_tools:
     st.subheader("🛠️ Edycja Elementów")
     
     # A. ZARZĄDZANIE ADNOTACJAMI
     with st.expander("📝 Adnotacje", expanded=True):
+        # Domyślne współrzędne (środek danych)
+        def_x = float(df_chart[x_col].mean()) if not df_chart.empty and pd.api.types.is_numeric_dtype(df_chart[x_col]) else 0.0
+        def_y = float(df_chart[y_cols[0]].mean()) if not df_chart.empty and len(y_cols)>0 and pd.api.types.is_numeric_dtype(df_chart[y_cols[0]]) else 0.0
+        
         # Formularz dodawania
         with st.form("new_note"):
-            # Domyślne współrzędne (środek danych)
-            def_x = float(df_chart[x_col].mean()) if not df_chart.empty and pd.api.types.is_numeric_dtype(df_chart[x_col]) else 0.0
-            def_y = float(df_chart[y_cols[0]].mean()) if not df_chart.empty and len(y_cols)>0 else 0.0
-            
             st.write("Dodaj nową:")
-            c1, c2 = st.columns(2)
-            new_x = c1.number_input("Poz X", value=def_x, key="nx")
-            new_y = c2.number_input("Poz Y", value=def_y, key="ny")
+            c1_n, c2_n = st.columns(2)
+            new_x = c1_n.number_input("Poz X", value=def_x, key="nx", format="%.2f")
+            new_y = c2_n.number_input("Poz Y", value=def_y, key="ny", format="%.2f")
             new_txt = st.text_input("Tekst", "Punkt A")
             
-            if st.form_submit_button("➕ Dodaj"):
+            if st.form_submit_button("➕ Dodaj Adnotację"):
                 st.session_state.annotations.append({'x': new_x, 'y': new_y, 'text': new_txt})
                 st.rerun()
 
         # Lista edycji istniejących
         if st.session_state.annotations:
             st.write("**Edytuj istniejące:**")
-            for i, note in enumerate(st.session_state.annotations):
-                with st.popover(f"✏️ {note['text'][:10]}..."):
-                    # Edycja wartości = PRZESUWANIE
-                    e_x = st.number_input(f"X##{i}", value=float(note['x']))
-                    e_y = st.number_input(f"Y##{i}", value=float(note['y']))
-                    e_txt = st.text_input(f"Tekst##{i}", value=note['text'])
-                    
-                    # Zapisz zmiany od razu po zmianie wartości (Streamlit rerunuje po zmianie inputu)
-                    if e_x != note['x'] or e_y != note['y'] or e_txt != note['text']:
-                        st.session_state.annotations[i] = {'x': e_x, 'y': e_y, 'text': e_txt}
-                        st.rerun()
-                        
-                    if st.button("Usuń", key=f"rm_note_{i}"):
-                        st.session_state.annotations.pop(i)
-                        st.rerun()
+            # Używamy st.data_editor do edycji listy słowników - wygodniej
+            edited_notes = st.data_editor(
+                st.session_state.annotations,
+                column_config={
+                    "x": st.column_config.NumberColumn("Poz X", format="%.2f"),
+                    "y": st.column_config.NumberColumn("Poz Y", format="%.2f"),
+                    "text": st.column_config.TextColumn("Tekst"),
+                },
+                num_rows="dynamic",
+                hide_index=True,
+                key="notes_editor"
+            )
+            # Aktualizacja tylko, jeśli dane się zmieniły
+            if edited_notes != st.session_state.annotations:
+                 st.session_state.annotations = edited_notes
+                 st.rerun() # Wymuszamy rerun, aby adnotacje na wykresie się zaktualizowały
 
     # B. LINIE REFERENCYJNE
     with st.expander("📏 Linie Referencyjne", expanded=True):
@@ -281,78 +350,70 @@ with col_tools:
             l_val = st.number_input("Wartość", value=0.0)
             if st.form_submit_button("➕ Dodaj Linię"):
                 st.session_state.ref_lines.append({
-                    'axis': l_ax, 'value': l_val, 
-                    'color': '#AAAAAA', 'style': '-', 'width': 1.0
+                    'axis': l_ax, 
+                    'value': l_val, 
+                    'color': DEFAULT_REF_LINE_COLOR, 
+                    'style': DEFAULT_REF_LINE_STYLE, 
+                    'width': DEFAULT_REF_LINE_WIDTH
                 })
                 st.rerun()
         
-        # Lista edycji (Przesuwanie suwakami/liczbami)
+        # Lista edycji (Użycie data_editor jest bardziej Streamlitowe i łatwiejsze)
         if st.session_state.ref_lines:
-            st.write("**Przesuń / Edytuj:**")
-            for i, line in enumerate(st.session_state.ref_lines):
-                st.caption(f"Linia {i+1} ({line['axis']})")
-                c1, c2 = st.columns([3, 1])
-                # To działa jak przesuwanie - zmiana wartości odświeża wykres
-                new_v = c1.number_input("Poz", value=float(line['value']), key=f"lv_{i}", label_visibility="collapsed")
-                
-                if new_v != line['value']:
-                    st.session_state.ref_lines[i]['value'] = new_v
-                    st.rerun()
-                    
-                if c2.button("X", key=f"rm_line_{i}"):
-                    st.session_state.ref_lines.pop(i)
-                    st.rerun()
-                
-                with st.popover("Styl"):
-                    c = st.color_picker("Kolor", line['color'], key=f"lc_{i}")
-                    s = st.selectbox("Typ", REF_LINE_STYLES, key=f"ls_{i}")
-                    w = st.slider("Grubość", 0.5, 5.0, line['width'], key=f"lw_{i}")
-                    # Zapis stylu
-                    st.session_state.ref_lines[i].update({'color': c, 'style': LINE_STYLE_MAP[s], 'width': w})
-
+            st.write("**Edytuj istniejące:**")
+            edited_lines = st.data_editor(
+                st.session_state.ref_lines,
+                column_config={
+                    "axis": st.column_config.SelectboxColumn("Oś", options=["X", "Y"]),
+                    "value": st.column_config.NumberColumn("Wartość", format="%.2f"),
+                    "color": st.column_config.ColorPickerColumn("Kolor"),
+                    "style": st.column_config.SelectboxColumn("Styl", options=REF_LINE_STYLES, default="Ciągła (-)"),
+                    "width": st.column_config.NumberColumn("Grubość", min_value=0.5, max_value=5.0, step=0.5),
+                },
+                num_rows="dynamic",
+                hide_index=True,
+                key="lines_editor"
+            )
+            
+            # Wymiana stylu tekstowego na symbol Matplotlib
+            for line in edited_lines:
+                if line['style'] in LINE_STYLE_MAP:
+                    line['style'] = LINE_STYLE_MAP[line['style']]
+            
+            if edited_lines != st.session_state.ref_lines:
+                st.session_state.ref_lines = edited_lines
+                st.rerun() # Wymuszamy rerun, aby linie na wykresie się zaktualizowały
 
 with col_plot:
-    # Tytuł i Wykres
+    # Tytuł Wykresu
     chart_title = st.text_input("Tytuł Wykresu", "Mój Wykres", label_visibility="collapsed", placeholder="Wpisz tytuł...")
-    chart_config['title'] = chart_title
+    st.session_state.chart_config['title'] = chart_title
     
-    # Generowanie wykresu (Ekran)
-    fig_screen = create_chart_figure(df_chart, x_col, y_cols, chart_config, export_mode=None)
+    # Generowanie i wyświetlanie wykresu
+    fig_screen = create_chart_figure(df_chart, x_col, y_cols, st.session_state.chart_config, export_mode=None)
     st.pyplot(fig_screen)
 
     st.divider()
     
     # --- SEKCJA EKSPORTU ---
     st.subheader("💾 Eksport")
+    st.markdown("Pamiętaj, że adnotacje i linie ref. są zachowane w każdym formacie, ale styl (kolor tła/linii) jest dostosowany do trybu.")
     
     e_col1, e_col2, e_col3 = st.columns(3)
     
-    # Funkcja pomocnicza do pobierania pliku
-    def get_image_download_link(fig, format, mode, label):
-        buf = io.BytesIO()
-        # Generujemy NOWĄ figurę specjalnie dla eksportu z odpowiednimi kolorami
-        fig_export = create_chart_figure(df_chart, x_col, y_cols, chart_config, export_mode=mode)
-        fig_export.savefig(buf, format=format, dpi=300)
-        plt.close(fig_export) # Ważne: zamykamy figurę, żeby zwolnić pamięć
-        buf.seek(0)
-        return st.download_button(
-            label=label,
-            data=buf,
-            file_name=f"wykres_{mode}.{format}",
-            mime=f"image/{format}"
-        )
-
+    file_prefix = chart_title.replace(" ", "_").lower() if chart_title else "wykres"
+    
     with e_col1:
         st.markdown("**1. Ekran (Ciemny)**")
-        get_image_download_link(fig_screen, "png", None, "Pobierz PNG")
-        get_image_download_link(fig_screen, "pdf", None, "Pobierz PDF")
+        get_image_download_link(fig_screen, "png", None, "Pobierz PNG", file_prefix)
+        get_image_download_link(fig_screen, "pdf", None, "Pobierz PDF", file_prefix)
         
     with e_col2:
         st.markdown("**2. Druk (Kolor)**")
-        get_image_download_link(fig_screen, "png", "print_color", "Pobierz PNG")
-        get_image_download_link(fig_screen, "pdf", "print_color", "Pobierz PDF")
+        get_image_download_link(fig_screen, "png", "print_color", "Pobierz PNG", file_prefix)
+        get_image_download_link(fig_screen, "pdf", "print_color", "Pobierz PDF", file_prefix)
 
     with e_col3:
         st.markdown("**3. Druk (Cz-B)**")
-        get_image_download_link(fig_screen, "png", "print_bw", "Pobierz PNG")
-        get_image_download_link(fig_screen, "pdf", "print_bw", "Pobierz PDF")
+        get_image_download_link(fig_screen, "png", "print_bw", "Pobierz PNG", file_prefix)
+        get_image_download_link(fig_screen, "pdf", "print_bw", "Pobierz PDF", file_prefix)
