@@ -17,7 +17,6 @@ DARK_BACKGROUND = "#2A2A2A"
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)]
 POINTS_OPTIONS = list(range(1, 51))
 
-# ZMIANA: Dodano nową kategorię "Indeksy" do znaków specjalnych
 SPECIAL_SYMBOLS = {
     "Indeksy": {
         "Indeks Górny 1": "¹", "Indeks Górny 2": "²", "Indeks Górny 3": "³", 
@@ -48,7 +47,7 @@ SPECIAL_SYMBOLS = {
 }
 
 
-# --- 2. ZARZĄDZANIE STANEM (Bez zmian) ---
+# --- 2. ZARZĄDZANIE STANEM ---
 
 if 'num_series' not in st.session_state:
     st.session_state.num_series = 1
@@ -64,9 +63,11 @@ if 'ref_lines' not in st.session_state:
     st.session_state.ref_lines = []
 if 'series_config' not in st.session_state:
     st.session_state.series_config = {}
+if 'symbol_to_copy' not in st.session_state:
+    st.session_state.symbol_to_copy = "Kliknij symbol, by go tutaj wyświetlić."
 
 
-# --- 3. FUNKCJE POMOCNICZE (Bez zmian funkcjonalnych) ---
+# --- 3. FUNKCJE POMOCNICZE ---
 
 def process_uploaded_file(uploaded_file):
     """Obsługa CSV, Excel i TXT."""
@@ -76,8 +77,10 @@ def process_uploaded_file(uploaded_file):
         else:
             uploaded_file.seek(0)
             try:
+                # Próba odczytu z automatycznym wykrywaniem separatora
                 df = pd.read_csv(uploaded_file, sep=None, engine='python')
             except:
+                # Awaryjne odczytanie z domyślnym separatorem (przecinek)
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file)
         
@@ -85,6 +88,14 @@ def process_uploaded_file(uploaded_file):
         if len(df.columns) > 11:
             df = df.iloc[:, :11]
 
+        # Wymuszenie konwersji wszystkich danych na float, ignorując błędy
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+        # Upewnienie się, że jest kolumna X
+        if df.columns[0] != 'X':
+            df = df.rename(columns={df.columns[0]: 'X'})
+            
         return df
     except Exception as e:
         st.error(f"Błąd formatu pliku: {e}")
@@ -217,6 +228,12 @@ def get_image_download_link(fig, format, mode, label, file_prefix):
         mime=f"image/{format}"
     )
 
+def set_symbol_to_copy(symbol):
+    """Ustawia symbol w stanie sesji do skopiowania."""
+    st.session_state.symbol_to_copy = symbol
+    st.toast(f"Wybrano: {symbol}. Zaznacz pole pod spodem i skopiuj.", icon='📋')
+
+
 # --- 4. INTERFEJS UŻYTKOWNIKA ---
 
 st.title("📊 Chart Master Web")
@@ -225,6 +242,9 @@ st.title("📊 Chart Master Web")
 with st.sidebar:
     st.header("1. Źródło Danych i Rozmiar")
     
+    # Ustalenie trybu
+    is_manual_mode = (st.session_state.get('data_source', "Wpisz Ręcznie") == "Wpisz Ręcznie")
+
     # 1. ŹRÓDŁO DANYCH
     with st.container(border=True):
         st.subheader("Opcje Danych")
@@ -235,58 +255,79 @@ with st.sidebar:
             if uploaded_file:
                 df_new = process_uploaded_file(uploaded_file)
                 if df_new is not None: 
+                    # Aktualizacja stanu sesji
                     st.session_state.df = df_new
                     st.session_state.annotations = []
                     st.session_state.ref_lines = []
                     st.session_state.series_config = {}
                     st.session_state.num_series = len(df_new.columns) - 1 if len(df_new.columns) > 0 else 1
                     st.session_state.num_points = len(df_new)
-                    st.success("Wczytano plik!")
+                    st.success(f"Wczytano plik! ({st.session_state.num_points} punktów, {st.session_state.num_series} serii).")
+                    # Rerun jest konieczny, aby cały skrypt odświeżył się z nowymi danymi
+                    st.rerun() 
 
     # 2. KONFIGURACJA ROZMIARU
     with st.container(border=True):
         st.subheader("Rozmiar Danych")
-        c_size1, c_size2 = st.columns(2)
         
-        num_series_input = c_size1.selectbox("Liczba Serii (Y)", list(range(1, 11)), index=st.session_state.num_series - 1, key='sel_num_series')
-        
-        try:
-            current_index = POINTS_OPTIONS.index(st.session_state.num_points)
-        except ValueError:
-            current_index = POINTS_OPTIONS.index(5)
+        if is_manual_mode:
+            c_size1, c_size2 = st.columns(2)
             
-        num_points_input = c_size2.selectbox("Liczba Punktów (X)", POINTS_OPTIONS, index=current_index, key='sel_num_points')
-        
-        
-        # Logika dynamicznej aktualizacji DF
-        if num_series_input != st.session_state.num_series or num_points_input != st.session_state.num_points:
-            st.session_state.num_series = num_series_input
-            st.session_state.num_points = num_points_input
+            # Ręczny wybór serii
+            num_series_input = c_size1.selectbox(
+                "Liczba Serii (Y)", 
+                list(range(1, 11)), 
+                index=st.session_state.num_series - 1, 
+                key='sel_num_series'
+            )
+            
+            # Ręczny wybór punktów
+            try:
+                current_index = POINTS_OPTIONS.index(st.session_state.num_points)
+            except ValueError:
+                current_index = POINTS_OPTIONS.index(5)
+                
+            num_points_input = c_size2.selectbox(
+                "Liczba Punktów (X)", 
+                POINTS_OPTIONS, 
+                index=current_index, 
+                key='sel_num_points'
+            )
 
-            current_cols = ['X'] + SERIES_NAMES[:st.session_state.num_series]
-            old_df = st.session_state.df
-            
-            new_df = pd.DataFrame(index=range(st.session_state.num_points))
-            
-            for col in current_cols:
-                if col in old_df.columns:
-                    series_data = old_df[col].astype(float)
-                else:
-                    series_data = pd.Series(np.zeros(len(old_df))).astype(float)
+            # Logika dynamicznej aktualizacji DF (tylko w trybie ręcznym)
+            if num_series_input != st.session_state.num_series or num_points_input != st.session_state.num_points:
+                st.session_state.num_series = num_series_input
+                st.session_state.num_points = num_points_input
+
+                current_cols = ['X'] + SERIES_NAMES[:st.session_state.num_series]
+                old_df = st.session_state.df
                 
-                if len(series_data) < st.session_state.num_points:
-                    missing_rows = st.session_state.num_points - len(series_data)
-                    new_data = pd.concat([series_data, pd.Series(np.zeros(missing_rows)).astype(float)], ignore_index=True)
-                else:
-                    new_data = series_data.head(st.session_state.num_points)
+                new_df = pd.DataFrame(index=range(st.session_state.num_points))
                 
-                new_df[col] = new_data.fillna(0).astype(float)
-            
-            if (new_df['X'] == 0).all() or len(new_df['X']) != st.session_state.num_points:
-                new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
+                for col in current_cols:
+                    if col in old_df.columns:
+                        series_data = old_df[col].astype(float)
+                    else:
+                        series_data = pd.Series(np.zeros(len(old_df))).astype(float)
+                    
+                    if len(series_data) < st.session_state.num_points:
+                        missing_rows = st.session_state.num_points - len(series_data)
+                        new_data = pd.concat([series_data, pd.Series(np.zeros(missing_rows)).astype(float)], ignore_index=True)
+                    else:
+                        new_data = series_data.head(st.session_state.num_points)
+                    
+                    new_df[col] = new_data.fillna(0).astype(float)
                 
-            st.session_state.df = new_df
-            st.rerun()
+                if (new_df['X'] == 0).all() or len(new_df['X']) != st.session_state.num_points:
+                    new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
+                    
+                st.session_state.df = new_df
+                st.rerun()
+        else:
+            st.caption("Rozmiar danych jest automatycznie ustalany na podstawie wczytanego pliku.")
+            c_size1, c_size2 = st.columns(2)
+            c_size1.metric("Liczba Serii (Y)", st.session_state.num_series)
+            c_size2.metric("Liczba Punktów (X)", st.session_state.num_points)
 
     if st.session_state.df.empty:
         st.warning("Brak danych. Dodaj punkty danych.")
@@ -336,13 +377,33 @@ with st.sidebar:
     
     # ZNAKI SPECJALNE
     with st.expander("✨ Znaki Specjalne i Symbole"):
-        st.markdown("Kliknij, aby skopiować symbol:")
+        
+        # Ulepszone pole do kopiowania
+        st.markdown("**Aby skopiować symbol, kliknij w niego, a następnie ręcznie ZAZNACZ i skopiuj z pola poniżej (Ctrl+C).**")
+        
+        st.text_input(
+            "Symbol do skopiowania:", 
+            st.session_state.symbol_to_copy, 
+            key="copy_display", 
+            label_visibility="visible",
+            disabled=True # Zablokowane, aby podkreślić, że to pole wyjściowe
+        )
+        
+        st.markdown("---")
+        
         for category, symbols in SPECIAL_SYMBOLS.items():
             st.caption(f"**{category}**")
             cols = st.columns(5)
-            for i, (name, symbol) in enumerate(symbols.items()):
-                cols[i%5].button(symbol, help=f"Kopiuj: {name} ({symbol})", key=f"sym_{name}", on_click=lambda s=symbol: st.toast(f"Skopiowano: {s}", icon='📋'))
-                
+            col_index = 0
+            for name, symbol in symbols.items():
+                cols[col_index%5].button(
+                    symbol, 
+                    key=f"sym_{name}", 
+                    on_click=set_symbol_to_copy, 
+                    args=(symbol,)
+                )
+                col_index += 1
+
 
 # --- GŁÓWNY OBSZAR: PRZYGOTOWANIE DANYCH ---
 
@@ -439,7 +500,6 @@ with col_tools:
             if new_color != cfg['color'] or new_alias != cfg['alias']:
                 st.session_state.series_config[col]['color'] = new_color
                 st.session_state.series_config[col]['alias'] = new_alias
-                # st.rerun() # Usunięto rerun, polegając na Streamlit
 
     # 3. ADNOTACJE (Dodawanie)
     with st.expander("📝 Adnotacje", expanded=True):
@@ -474,7 +534,7 @@ with col_tools:
             for i, note in enumerate(st.session_state.annotations):
                 
                 with st.container(border=True): 
-                    col_del, col_x, col_y = st.columns([0.5, 1.5, 1.5]) # Zmieniona kolejność dla czerwonego X
+                    col_del, col_x, col_y = st.columns([0.5, 1.5, 1.5]) 
                     
                     if col_del.button("❌", key=f"an_del_{i}", help="Usuń adnotację"):
                         rerun_needed = True
@@ -492,7 +552,7 @@ with col_tools:
                  st.session_state.annotations = notes_to_keep
                  st.rerun()
             else:
-                 st.session_state.annotations = notes_to_keep # Zapisanie zmian w inputach
+                 st.session_state.annotations = notes_to_keep 
 
 
     # 4. LINIE REFERENCYJNE (Dodawanie)
@@ -573,7 +633,7 @@ with col_tools:
                 st.session_state.ref_lines = lines_to_keep
                 st.rerun()
             else:
-                 st.session_state.ref_lines = lines_to_keep # Zapisanie zmian w inputach
+                 st.session_state.ref_lines = lines_to_keep 
 
 with col_plot:
     st.markdown("## 📈 Wynikowy Wykres")
