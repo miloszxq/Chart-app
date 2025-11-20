@@ -6,3 +6,4 @@ pymupdf
 Pillow
 streamlit-drawable-canvas
 matplotlib
+opencv-python
