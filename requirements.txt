@@ -2,8 +2,8 @@ streamlit
 pandas
 numpy
 openpyxl
-pymupdf
 Pillow
-streamlit-drawable-canvas
 matplotlib
 opencv-python
+pypdf
+streamlit-pdf-reader
