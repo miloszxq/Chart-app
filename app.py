@@ -4,18 +4,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import io
 from PIL import Image
+from unittest.mock import MagicMock
 
-# --- HOTFIX DLA BŁĘDU "image_to_url" ---
-# Ten fragment naprawia błąd kompatybilności Streamlit > 1.34 z biblioteką canvas
+# --- HOTFIX DLA BŁĘDU "image_to_url" w Streamlit 1.34+ ---
+# Ten fragment kodu musi być na samej górze, przed importem st_canvas.
+# Naprawia błąd kompatybilności biblioteki streamlit-drawable-canvas z nowym Streamlitem.
+
 import streamlit.elements.image as st_image
-try:
-    from streamlit.elements.lib.image_utils import image_to_url
-    if not hasattr(st_image, 'image_to_url'):
-        st_image.image_to_url = image_to_url
-except ImportError:
-    pass # Starsze wersje Streamlit mogą tego nie potrzebować
+from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
 
-# Importy bibliotek zewnętrznych
+def patched_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji=False):
+    # Biblioteka canvas przekazuje 'width' jako int, a nowy Streamlit oczekuje obiektu konfiguracyjnego.
+    # Tworzymy "fałszywy" obiekt konfiguracyjny, który ma atrybut .width
+    if isinstance(width, int):
+        mock_config = MagicMock()
+        mock_config.width = width
+        width = mock_config
+    return original_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji)
+
+# Podmieniamy oryginalną funkcję naszą naprawioną wersją
+st_image.image_to_url = patched_image_to_url
+
+# --- IMPORTY BIBLIOTEK ZEWNĘTRZNYCH ---
 try:
     import fitz  # PyMuPDF
     from streamlit_drawable_canvas import st_canvas
@@ -26,7 +36,7 @@ except ImportError:
 # --- 1. KONFIGURACJA I STAŁE ---
 st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
 
-# CSS dla wyglądu przycisków w pasku narzędzi
+# CSS dla wyglądu przycisków w pasku narzędzi PDF
 st.markdown("""
 <style>
     /* Stylizacja przycisków w lewej kolumnie PDF */
@@ -126,7 +136,7 @@ def run_chart_creator():
                 new_cols[col] = new_col_name
             
             df = df.rename(columns=new_cols)
-            # POPRAWKA REGEX
+            # Użycie raw string r'' aby uniknąć SyntaxWarning
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
         except Exception: return None
@@ -396,12 +406,12 @@ def run_chart_creator():
                     with st.container(border=True):
                         cd, ca, cv = st.columns([0.5, 1, 2])
                         if cd.button("❌", key=f"rml_{i}"): rerun = True; continue
-                        na = ca.selectbox("Oś", ["X", "Y"], index=0 if l['axis']=='X' else 1, key=f"la_{i}", label_visibility="collapsed")
+                        na = ca.selectbox("Oś", ["X", "Y"], index=0 if l['axis']=='X' else 1, key=f"la_{i}")
                         nv = cv.number_input("Val", value=l['value'], key=f"lv_{i}", format="%f")
                         c1, c2, c3 = st.columns([1.5, 1.5, 1])
-                        nc = c1.color_picker("Kol", l['color'], key=f"lc_{i}", label_visibility="collapsed")
-                        ns = c2.selectbox("Styl", REF_LINE_STYLES, index=REF_LINE_STYLES.index(l.get('style', DEFAULT_REF_LINE_STYLE)) if l.get('style') in REF_LINE_STYLES else 0, key=f"ls_{i}", label_visibility="collapsed")
-                        nw = c3.selectbox("Gr", WIDTH_OPTIONS, index=WIDTH_OPTIONS.index(l.get('width', 1.0)) if l.get('width') in WIDTH_OPTIONS else 0, key=f"lw_{i}", label_visibility="collapsed")
+                        nc = c1.color_picker("Kol", l['color'], key=f"lc_{i}")
+                        ns = c2.selectbox("Styl", REF_LINE_STYLES, index=REF_LINE_STYLES.index(l.get('style', DEFAULT_REF_LINE_STYLE)) if l.get('style') in REF_LINE_STYLES else 0, key=f"ls_{i}")
+                        nw = c3.selectbox("Gr", WIDTH_OPTIONS, index=WIDTH_OPTIONS.index(l.get('width', 1.0)) if l.get('width') in WIDTH_OPTIONS else 0, key=f"lw_{i}")
                     lines_keep.append({'axis': na, 'value': nv, 'color': nc, 'style': ns, 'width': nw})
                 if rerun or len(lines_keep) != len(st.session_state.ref_lines):
                     st.session_state.ref_lines = lines_keep
