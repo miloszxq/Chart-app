@@ -3,46 +3,43 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import io
-from pypdf import PdfReader, PdfWriter, transformation
-from pypdf.generic import NameObject, TextString
-from reportlab.pdfgen import canvas as reportlab_canvas
-from reportlab.lib.pagesizes import letter
 from PIL import Image
 from unittest.mock import MagicMock
 
-# --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ ---
-# To musi być na samej górze pliku.
-# Naprawia błąd "TypeError: image_to_url() takes X arguments..."
+# --- KONFIGURACJA BIBLIOTEK DLA EDYTORA PDF ---
+try:
+    from pypdf import PdfReader, PdfWriter 
+    from reportlab.pdfgen import canvas as reportlab_canvas
+    from reportlab.lib.pagesizes import letter
+except ImportError:
+    st.error("Błąd: Brakuje bibliotek pypdf lub reportlab. Zainstaluj je za pomocą: `pip install pypdf reportlab`")
+    st.stop()
+
+
+# --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ (Potrzebny, jeśli używamy st_canvas, ale zostawiamy prewencyjnie) ---
 import streamlit.elements.image as st_image
 try:
-    # W nowszych wersjach Streamlit ścieżka do funkcji może się zmieniać
     from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
 except ImportError:
-    st.error("Wymagana funkcja Streamlit jest niedostępna. Użyj nowszej wersji biblioteki Streamlit.")
-    st.stop()
-    
+    # Alternatywa dla starszych/innych wersji Streamlit
+    try:
+        from streamlit.elements.image import image_to_url as original_image_to_url
+    except ImportError:
+        def original_image_to_url(*args, **kwargs): return "mock_url"
+
 def patched_image_to_url(image, width, *args, **kwargs):
-    # Biblioteka st_canvas przekazuje width jako int (liczbę).
-    # Nowy Streamlit oczekuje obiektu konfiguracyjnego.
-    # Ta funkcja zamienia int na obiekt "udający" konfigurację.
+    # Patch zamienia int width na mock object, który jest oczekiwany przez nowsze wersje st.image_to_url
     if isinstance(width, int):
         mock_config = MagicMock()
         mock_config.width = width
         width = mock_config
-    
-    # Przekazujemy dalej dokładnie te argumenty, które otrzymaliśmy
     return original_image_to_url(image, width, *args, **kwargs)
 
-# Podmieniamy funkcję w module Streamlit
-st_image.image_to_url = patched_image_to_url
-
-# --- IMPORTY BIBLIOTEK ZEWNĘTRZNYCH ---
 try:
-    import fitz  # PyMuPDF (silnik C/C++)
-    from streamlit_drawable_canvas import st_canvas
-except ImportError:
-    st.error("Brakuje bibliotek! Upewnij się, że masz zainstalowane: pymupdf, streamlit-drawable-canvas, Pillow")
-    st.stop()
+    st_image.image_to_url = patched_image_to_url
+except AttributeError:
+    pass
+
 
 # --- KONFIGURACJA STRONY ---
 st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
@@ -50,7 +47,7 @@ st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
 # --- CSS (STYLIZACJA) ---
 st.markdown("""
 <style>
-    /* Wygląd przycisków w lewym panelu PDF */
+    /* Wygląd przycisków w lewym panelu */
     div[data-testid="stVerticalBlock"] > div > button {
         width: 100%;
         text-align: left;
@@ -94,15 +91,29 @@ def go_home():
 
 def go_chart():
     st.session_state.current_view = "chart_creator"
+    # Inicjalizacja stanu dla Kreatora Wykresów
+    if 'num_series' not in st.session_state: st.session_state.num_series = 1
+    if 'num_points' not in st.session_state: st.session_state.num_points = 10
+    if 'df' not in st.session_state: st.session_state.df = pd.DataFrame({"X": np.arange(1, 11).astype(float), "Y1": np.random.rand(10) * 10})
+    if 'annotations' not in st.session_state: st.session_state.annotations = []
+    if 'ref_lines' not in st.session_state: st.session_state.ref_lines = []
+    if 'series_config' not in st.session_state: 
+        default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        st.session_state.series_config = {"Y1": {'color': default_colors[0], 'alias': 'Y1'}}
+    if 'symbol_to_copy' not in st.session_state: st.session_state.symbol_to_copy = ""
     st.rerun()
 
 def go_pdf():
     st.session_state.current_view = "pdf_editor"
+    # Inicjalizacja stanu dla Edytora PDF
+    if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
+    if 'current_pdf_annotations' not in st.session_state: st.session_state.current_pdf_annotations = []
+    if 'last_pdf' not in st.session_state: st.session_state.last_pdf = "dokument.pdf"
     st.rerun()
 
 
 # ==========================================
-# MODUŁ 1: KREATOR WYKRESÓW
+# MODUŁ 1: KREATOR WYKRESÓW (Pełna wersja)
 # ==========================================
 
 def run_chart_creator():
@@ -112,20 +123,17 @@ def run_chart_creator():
     with c_tit:
         st.subheader("📊 Kreator Wykresów")
 
-    if 'num_series' not in st.session_state: st.session_state.num_series = 1
-    if 'num_points' not in st.session_state: st.session_state.num_points = 1
-    if 'df' not in st.session_state: st.session_state.df = pd.DataFrame({"X": [1.0], "Y1": [10.0]})
-    if 'annotations' not in st.session_state: st.session_state.annotations = []
-    if 'ref_lines' not in st.session_state: st.session_state.ref_lines = []
-    if 'series_config' not in st.session_state: st.session_state.series_config = {}
-    if 'symbol_to_copy' not in st.session_state: st.session_state.symbol_to_copy = ""
-
+    # Inicjalizacja stanu (tylko na wypadek bezpośredniego dostępu)
+    if 'num_series' not in st.session_state: go_chart() 
+    
     def process_uploaded_file(uploaded_file):
+        """Wczytuje i przetwarza pliki danych (Excel, CSV, TXT)."""
         try:
             if uploaded_file.name.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(uploaded_file)
             else:
                 uploaded_file.seek(0)
+                # Próba wczytania z różnymi separatorami
                 try: df = pd.read_csv(uploaded_file, sep=None, engine='python')
                 except: 
                     uploaded_file.seek(0)
@@ -135,21 +143,25 @@ def run_chart_creator():
             df.columns = [str(c) for c in df.columns]
             df = df.replace(r'^\s*$', np.nan, regex=True).dropna(how='all')
             if df.shape[1] < 2: return None
-            if df.shape[1] > 11: df = df.iloc[:, :11]
+            if df.shape[1] > 11: df = df.iloc[:, :11] # Max 10 serii Y + 1 X
 
             new_cols = {}
             for i, col in enumerate(df.columns):
                 if i == 0: new_col_name = 'X'
                 else: new_col_name = f'Y{i}'
+                # Konwersja na float i zastąpienie błędnych wartości zerem
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
                 new_cols[col] = new_col_name
             
             df = df.rename(columns=new_cols)
+            # Usuń wiersze, gdzie wszystkie kolumny Y są zerowe
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
-        except Exception: return None
+        except Exception: 
+            return None
 
     def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
+        """Generuje obiekt Matplotlib Figure na podstawie danych i konfiguracji."""
         if export_mode in ['print_color', 'print_bw']:
             bg_color, text_color, grid_color = "white", "black", "lightgray"
         else:
@@ -158,6 +170,7 @@ def run_chart_creator():
         fig, ax = plt.subplots(figsize=(10, 6), facecolor=bg_color)
         ax.set_facecolor(bg_color)
         
+        # Obsługa osi w punkcie (0,0)
         if config['origin_at_zero']:
             ax.spines['left'].set_position('zero')
             ax.spines['bottom'].set_position('zero')
@@ -175,22 +188,30 @@ def run_chart_creator():
 
         color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
         
+        # Rysowanie serii
         for i, col in enumerate(y_cols):
             if col not in df.columns: continue
             cfg = st.session_state.series_config.get(col, {'color': color_cycle[i % len(color_cycle)], 'alias': col})
             alias = cfg['alias']
             
             if export_mode == 'print_bw':
+                # W trybie B/W używamy tylko czarnego koloru i różnych stylów linii
                 color, linestyle = 'black', ['-', '--', ':', '-.'][i % 4]
             else:
                 color, linestyle = cfg['color'], LINE_STYLE_MAP.get(config['line_style'], '-')
 
             if config['type'] == "Liniowy":
-                if len(df) <= 1: ax.plot(df[x_col], df[col], label=alias, color=color, linestyle='None', linewidth=config['width'], marker='o')
-                else: ax.plot(df[x_col], df[col], label=alias, color=color, linestyle=linestyle, linewidth=config['width'], marker='o' if config['markers'] else None)
-            elif config['type'] == "Punktowy": ax.scatter(df[x_col], df[col], label=alias, color=color, s=30)
-            elif config['type'] == "Słupkowy": ax.bar(df[x_col], df[col], label=alias, color=color, alpha=0.7)
+                # Specjalna obsługa dla pojedynczego punktu
+                if len(df) <= 1: 
+                    ax.plot(df[x_col], df[col], label=alias, color=color, linestyle='None', linewidth=config['width'], marker='o')
+                else: 
+                    ax.plot(df[x_col], df[col], label=alias, color=color, linestyle=linestyle, linewidth=config['width'], marker='o' if config['markers'] else None)
+            elif config['type'] == "Punktowy": 
+                ax.scatter(df[x_col], df[col], label=alias, color=color, s=30)
+            elif config['type'] == "Słupkowy": 
+                ax.bar(df[x_col], df[col], label=alias, color=color, alpha=0.7)
 
+        # Rysowanie linii referencyjnych
         for line in st.session_state.ref_lines:
             l_color = 'black' if export_mode == 'print_bw' else line.get('color', DEFAULT_REF_LINE_COLOR)
             l_style = LINE_STYLE_MAP.get(line.get('style', DEFAULT_REF_LINE_STYLE), '-')
@@ -198,21 +219,25 @@ def run_chart_creator():
             if line['axis'] == 'X': ax.axvline(line['value'], color=l_color, linestyle=l_style, linewidth=l_width)
             else: ax.axhline(line['value'], color=l_color, linestyle=l_style, linewidth=l_width)
 
+        # Rysowanie adnotacji
         for note in st.session_state.annotations:
             n_color = 'black' if export_mode in ['print_color', 'print_bw'] else 'white'
             box_bg = 'white' if export_mode in ['print_color', 'print_bw'] else '#444444'
             ax.annotate(note['text'], xy=(note['x'], note['y']), xytext=(5, 5), textcoords="offset points", arrowprops=dict(arrowstyle="->", color=n_color), bbox=dict(boxstyle="round,pad=0.5", fc=box_bg, ec=n_color), color=n_color)
 
+        # Ustawianie limitów osi
         if config['xlim'][0] is not None: ax.set_xlim(left=config['xlim'][0])
         if config['xlim'][1] is not None: ax.set_xlim(right=config['xlim'][1])
         if config['ylim'][0] is not None: ax.set_ylim(bottom=config['ylim'][0])
         if config['ylim'][1] is not None: ax.set_ylim(top=config['ylim'][1])
         
+        # Skala logarytmiczna i siatka
         if config['log_x']: ax.set_xscale('log')
         if config['log_y']: ax.set_yscale('log')
         if config['grid']: ax.grid(True, linestyle='--', alpha=0.3, color=grid_color)
         else: ax.grid(False)
             
+        # Tytuły i legendy
         ax.set_title(config['title'])
         ax.set_xlabel(config['x_label'] if config['x_label'] else x_col)
         ax.set_ylabel(config['y_label'] if config['y_label'] else "Wartość Y")
@@ -221,7 +246,9 @@ def run_chart_creator():
         return fig
 
     def get_image_download_link(fig, format, mode, label, file_prefix):
+        """Generuje przycisk pobierania dla wykresu."""
         buf = io.BytesIO()
+        # Musimy ponownie wygenerować fig_export, aby zastosować styl eksportu (B/W, Kolor)
         fig_export = create_chart_figure(st.session_state.df_chart, st.session_state.x_col, st.session_state.y_cols, st.session_state.chart_config, export_mode=mode)
         fig_export.savefig(buf, format=format, dpi=300)
         plt.close(fig_export) 
@@ -229,6 +256,7 @@ def run_chart_creator():
         return st.download_button(label=label, data=buf, file_name=f"{file_prefix}_{mode}.{format}" if mode else f"{file_prefix}.{format}", mime=f"image/{format}")
 
     def set_symbol_to_copy(symbol):
+        """Aktualizuje stan do skopiowania symbolu."""
         st.session_state.symbol_to_copy = symbol
         st.toast(f"Wybrano: {symbol}", icon='📋')
 
@@ -242,10 +270,12 @@ def run_chart_creator():
             if data_source == "Wgraj Plik":
                 uploaded_file = st.file_uploader("Excel, CSV, TXT", type=['csv', 'txt', 'xlsx', 'xls'])
                 if uploaded_file:
+                    # Sprawdzenie, czy to ten sam plik, aby uniknąć zbędnego rerunu
                     if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != uploaded_file.file_id:
                         df_new = process_uploaded_file(uploaded_file)
                         if df_new is not None: 
                             st.session_state.df = df_new
+                            # Reset stanu
                             st.session_state.annotations = []
                             st.session_state.ref_lines = []
                             st.session_state.series_config = {}
@@ -259,7 +289,10 @@ def run_chart_creator():
             st.subheader("Rozmiar")
             if is_manual_mode:
                 c1, c2 = st.columns(2)
-                num_series_input = c1.selectbox("Serii (Y)", list(range(1, 11)), index=st.session_state.num_series - 1, key='sel_num_series')
+                # Upewnienie się, że index jest poprawny
+                num_series_index = max(0, min(st.session_state.num_series - 1, 9))
+                num_series_input = c1.selectbox("Serii (Y)", list(range(1, 11)), index=num_series_index, key='sel_num_series')
+                
                 try: cur_idx = POINTS_OPTIONS.index(st.session_state.num_points)
                 except: cur_idx = 0
                 num_points_input = c2.selectbox("Punktów (X)", POINTS_OPTIONS, index=cur_idx, key='sel_num_points')
@@ -268,26 +301,38 @@ def run_chart_creator():
                     st.session_state.num_series = num_series_input
                     st.session_state.num_points = num_points_input
                     current_cols = ['X'] + SERIES_NAMES[:st.session_state.num_series]
+                    
                     old_df = st.session_state.df
                     new_df = pd.DataFrame(index=range(st.session_state.num_points))
+                    
+                    # Dostosowanie rozmiaru i kolumn
                     for col in current_cols:
+                        # Wczytaj istniejące dane lub utwórz nowe zerowe
                         series_data = old_df[col].astype(float) if col in old_df.columns else pd.Series(np.zeros(len(old_df))).astype(float)
+                        
                         if len(series_data) < st.session_state.num_points:
+                             # Powiększenie, dodanie zer
                              new_data = pd.concat([series_data, pd.Series(np.zeros(st.session_state.num_points - len(series_data))).astype(float)], ignore_index=True)
-                        else: new_data = series_data.head(st.session_state.num_points)
+                        else: 
+                            # Przycięcie
+                            new_data = series_data.head(st.session_state.num_points)
+                            
                         new_df[col] = new_data.fillna(0).astype(float)
+                        
+                    # Upewnij się, że kolumna X nie jest pusta (użyj indeksu jeśli jest)
                     if (new_df['X'] == 0).all(): new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
+                    
                     st.session_state.df = new_df
                     st.rerun()
             else:
-                st.caption("Z pliku.")
+                st.caption(f"Wczytano z pliku ({st.session_state.num_points} pkt, {st.session_state.num_series} serii).")
 
         x_col = 'X'
         y_cols = [col for col in st.session_state.df.columns if col.startswith('Y')]
 
         st.header("2. Opcje Wykresu")
         with st.container(border=True):
-            st.subheader("Typ")
+            st.subheader("Typ i Oznaczenia")
             chart_type = st.selectbox("Typ", ["Liniowy", "Punktowy", "Słupkowy"], key='sel_type')
             origin_at_zero = st.checkbox("Oś w (0,0)", False, key='sel_origin')
             st.markdown("---")
@@ -303,14 +348,17 @@ def run_chart_creator():
             yM = c2.number_input("Y Max", value=None, format="%f")
 
         with st.container(border=True):
-            st.subheader("Styl")
+            st.subheader("Skala i Styl")
             c1, c2 = st.columns(2)
             line_style = c1.selectbox("Linia", REF_LINE_STYLES, key='sel_l_style')
-            line_width = c2.selectbox("Grubość", WIDTH_OPTIONS, index=1, key='sel_l_width')
+            # Upewnienie się, że index jest poprawny
+            try: line_width_index = WIDTH_OPTIONS.index(st.session_state.get('chart_config', {}).get('width', 2.0))
+            except ValueError: line_width_index = 1
+            line_width = c2.selectbox("Grubość", WIDTH_OPTIONS, index=line_width_index, key='sel_l_width')
             c3, c4 = st.columns(2)
             log_x = c3.checkbox("Log X", False, key='sel_log_x')
             log_y = c4.checkbox("Log Y", False, key='sel_log_y')
-            show_markers = st.checkbox("Markery", False, key='sel_markers')
+            show_markers = st.checkbox("Markery (tylko liniowy)", False, key='sel_markers')
             show_grid = st.checkbox("Siatka", True, key='sel_grid')
 
         with st.expander("✨ Symbole (Kopiuj)"):
@@ -322,6 +370,7 @@ def run_chart_creator():
                 for i, s in enumerate(syms):
                     cols[i%6].button(s, key=f"s_{cat}_{s}", on_click=set_symbol_to_copy, args=(s,))
 
+    # Zapis konfiguracji do stanu sesji
     chart_config = {'type': chart_type, 'line_style': line_style, 'width': line_width, 'markers': show_markers, 'log_x': log_x, 'log_y': log_y, 'grid': show_grid, 'xlim': (xm, xM), 'ylim': (ym, yM), 'title': "", 'x_label': x_label, 'y_label': y_label, 'origin_at_zero': origin_at_zero}
     st.session_state.df_chart = st.session_state.df.copy()
     st.session_state.x_col = x_col
@@ -331,6 +380,8 @@ def run_chart_creator():
     col_tools, col_plot = st.columns([1, 3])
     with col_tools:
         st.subheader("🛠️ Edycja")
+        
+        # --- EDYCJA DANYCH ---
         if data_source == "Wpisz Ręcznie":
             with st.expander("✏️ Dane", expanded=True):
                 with st.form("data_form"):
@@ -344,14 +395,19 @@ def run_chart_creator():
                             for idx, yc in enumerate(y_cols):
                                 ny = cols[idx+1].number_input(f"{yc} {r+1}", value=float(st.session_state.df.loc[r, yc]), key=f"d{yc}_{r}", format="%f")
                                 new_df_data[(r, yc)] = ny
-                    if st.form_submit_button("Zapisz"):
+                    if st.form_submit_button("Zapisz Zmiany Danych"):
                         temp_df = st.session_state.df.copy()
                         for (r, c), v in new_df_data.items(): temp_df.loc[r, c] = v
                         st.session_state.df = temp_df
                         st.rerun()
 
+        # --- KONFIGURACJA SERII ---
         with st.expander("🎨 Serie", expanded=True):
             default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+            
+            # Wyczyść konfigurację dla usuniętych serii
+            st.session_state.series_config = {k:v for k,v in st.session_state.series_config.items() if k in y_cols}
+            
             for i, col in enumerate(y_cols):
                 if col not in st.session_state.series_config: st.session_state.series_config[col] = {'color': default_colors[i % len(default_colors)], 'alias': col}
                 cfg = st.session_state.series_config[col]
@@ -363,92 +419,117 @@ def run_chart_creator():
                 if nc != cfg['color'] or na != cfg['alias']:
                     st.session_state.series_config[col].update({'color': nc, 'alias': na})
 
+        # --- ADNOTACJE ---
         with st.expander("📝 Adnotacje", expanded=True):
+            # Ustalenie domyślnych wartości na średniej
             def_x = float(st.session_state.df_chart[x_col].mean()) if not st.session_state.df_chart.empty else 0.0
             def_y = float(st.session_state.df_chart[y_cols[0]].mean()) if not st.session_state.df_chart.empty and len(y_cols)>0 else 0.0
+            
             with st.container(border=True):
                 with st.form("add_note", clear_on_submit=True):
                     c1, c2 = st.columns(2)
                     nx = c1.number_input("X", value=def_x, format="%f")
                     ny = c2.number_input("Y", value=def_y, format="%f")
-                    nt = st.text_input("Tekst")
-                    if st.form_submit_button("➕"):
+                    nt = st.text_input("Tekst Adnotacji")
+                    if st.form_submit_button("➕ Dodaj Adnotację"):
                         st.session_state.annotations.append({'x': nx, 'y': ny, 'text': nt})
                         st.rerun()
+            
             if st.session_state.annotations:
                 st.markdown("---")
                 notes_keep = []
                 rerun = False
+                st.caption("Kliknij ❌, aby usunąć lub edytuj i odśwież widok.")
+                
                 for i, n in enumerate(st.session_state.annotations):
                     with st.container(border=True):
                         cd, cx, cy = st.columns([0.5, 1.5, 1.5])
                         if cd.button("❌", key=f"rmn_{i}"): rerun = True; continue
-                        nx = cx.number_input("X", value=n['x'], key=f"nx_{i}", format="%f")
-                        ny = cy.number_input("Y", value=n['y'], key=f"ny_{i}", format="%f")
-                        nt = st.text_input("Treść", value=n['text'], key=f"nt_{i}")
-                    notes_keep.append({'x': nx, 'y': ny, 'text': nt})
-                if rerun or len(notes_keep) != len(st.session_state.annotations):
+                        
+                        # Edytowalne pola adnotacji
+                        nx_val = cx.number_input("X", value=n['x'], key=f"nx_{i}", format="%f", label_visibility="collapsed")
+                        ny_val = cy.number_input("Y", value=n['y'], key=f"ny_{i}", format="%f", label_visibility="collapsed")
+                        nt_val = st.text_input("Treść", value=n['text'], key=f"nt_{i}")
+                        
+                        notes_keep.append({'x': nx_val, 'y': ny_val, 'text': nt_val})
+                        
+                if rerun or len(notes_keep) != len(st.session_state.annotations) or any(n['x'] != st.session_state.annotations[i]['x'] for i, n in enumerate(notes_keep)):
                     st.session_state.annotations = notes_keep
-                    st.rerun()
-                else: st.session_state.annotations = notes_keep
+                    if rerun: st.rerun() 
+                else: 
+                    st.session_state.annotations = notes_keep
 
+        # --- LINIE REFERENCYJNE ---
         with st.expander("📏 Linie Ref.", expanded=True):
             with st.container(border=True):
                 with st.form("add_line", clear_on_submit=True):
                     c1, c2 = st.columns(2)
                     lx = c1.selectbox("Oś", ["X", "Y"])
                     lv = c2.number_input("Wartość", 0.0, format="%f")
-                    c3, c4 = st.columns(2)
+                    c3, c4, c5 = st.columns(3)
                     ls = c3.selectbox("Styl", REF_LINE_STYLES)
                     lw = c4.selectbox("Grubość", WIDTH_OPTIONS)
-                    if st.form_submit_button("➕"):
-                        st.session_state.ref_lines.append({'axis': lx, 'value': lv, 'color': DEFAULT_REF_LINE_COLOR, 'style': ls, 'width': lw})
+                    lc = c5.color_picker("Kolor", DEFAULT_REF_LINE_COLOR)
+                    
+                    if st.form_submit_button("➕ Dodaj Linię"):
+                        st.session_state.ref_lines.append({'axis': lx, 'value': lv, 'color': lc, 'style': ls, 'width': lw})
                         st.rerun()
+            
             if st.session_state.ref_lines:
                 st.markdown("---")
                 lines_keep = []
                 rerun = False
+                st.caption("Kliknij ❌, aby usunąć lub edytuj i odśwież widok.")
+                
                 for i, l in enumerate(st.session_state.ref_lines):
                     with st.container(border=True):
                         cd, ca, cv = st.columns([0.5, 1, 2])
                         if cd.button("❌", key=f"rml_{i}"): rerun = True; continue
-                        na = ca.selectbox("Oś", ["X", "Y"], index=0 if l['axis']=='X' else 1, key=f"la_{i}")
-                        nv = cv.number_input("Val", value=l['value'], key=f"lv_{i}", format="%f")
+                        
+                        na = ca.selectbox("Oś", ["X", "Y"], index=0 if l['axis']=='X' else 1, key=f"la_{i}", label_visibility="collapsed")
+                        nv = cv.number_input("Val", value=l['value'], key=f"lv_{i}", format="%f", label_visibility="collapsed")
+                        
                         c1, c2, c3 = st.columns([1.5, 1.5, 1])
                         nc = c1.color_picker("Kol", l['color'], key=f"lc_{i}", label_visibility="collapsed")
                         ns = c2.selectbox("Styl", REF_LINE_STYLES, index=REF_LINE_STYLES.index(l.get('style', DEFAULT_REF_LINE_STYLE)) if l.get('style') in REF_LINE_STYLES else 0, key=f"ls_{i}", label_visibility="collapsed")
                         nw = c3.selectbox("Gr", WIDTH_OPTIONS, index=WIDTH_OPTIONS.index(l.get('width', 1.0)) if l.get('width') in WIDTH_OPTIONS else 0, key=f"lw_{i}", label_visibility="collapsed")
+                        
                     lines_keep.append({'axis': na, 'value': nv, 'color': nc, 'style': ns, 'width': nw})
-                if rerun or len(lines_keep) != len(st.session_state.ref_lines):
+                    
+                if rerun or len(lines_keep) != len(st.session_state.ref_lines) or any(l['value'] != st.session_state.ref_lines[i]['value'] for i, l in enumerate(lines_keep)):
                     st.session_state.ref_lines = lines_keep
-                    st.rerun()
-                else: st.session_state.ref_lines = lines_keep
+                    if rerun: st.rerun()
+                else: 
+                    st.session_state.ref_lines = lines_keep
 
     with col_plot:
-        chart_title = st.text_input("Tytuł Wykresu", "Mój Wykres", key='title_input', placeholder="Tytuł")
+        chart_title = st.text_input("Tytuł Wykresu", st.session_state.chart_config.get('title', "Mój Wykres"), key='title_input', placeholder="Tytuł")
         st.session_state.chart_config['title'] = chart_title
+        
+        # Generowanie wykresu do podglądu
         fig_screen = create_chart_figure(st.session_state.df_chart, x_col, y_cols, st.session_state.chart_config, export_mode=None)
         st.pyplot(fig_screen)
         
         st.divider()
-        st.subheader("💾 Pobierz")
+        st.subheader("💾 Pobierz Wykres")
         c1, c2, c3 = st.columns(3)
         fp = chart_title.replace(" ", "_").lower() if chart_title else "wykres"
+        
         with c1:
-            st.markdown("**Ekran**")
+            st.markdown("**Ekran (Tło Ciemne)**")
             get_image_download_link(fig_screen, "png", None, "PNG", fp)
             get_image_download_link(fig_screen, "pdf", None, "PDF", fp)
         with c2:
-            st.markdown("**Druk (Kolor)**")
+            st.markdown("**Druk (Tło Białe / Kolor)**")
             get_image_download_link(fig_screen, "png", "print_color", "PNG", fp)
             get_image_download_link(fig_screen, "pdf", "print_color", "PDF", fp)
         with c3:
-            st.markdown("**Druk (Cz-B)**")
+            st.markdown("**Druk (Tło Białe / Cz-B)**")
             get_image_download_link(fig_screen, "png", "print_bw", "PNG", fp)
             get_image_download_link(fig_screen, "pdf", "print_bw", "PDF", fp)
 
 # ==========================================
-# MODUŁ 2: EDYTOR PDF
+# MODUŁ 2: EDYTOR PDF (Naprawiony - pypdf + reportlab)
 # ==========================================
 
 def run_pdf_editor():
@@ -456,12 +537,22 @@ def run_pdf_editor():
     with c_back:
         if st.button("🏠 Menu", use_container_width=True): go_home()
     with c_tit:
-        st.subheader("📄 Edytor PDF (Tryb Strukturalny)")
+        st.subheader("📄 Edytor PDF (Tryb Strukturalny - Text)")
 
     if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
     if 'current_pdf_annotations' not in st.session_state: st.session_state.current_pdf_annotations = []
+    if 'last_pdf' not in st.session_state: st.session_state.last_pdf = "dokument.pdf"
     
     col_tools, col_workspace = st.columns([1, 3])
+    
+    # Ustalanie liczby stron do ograniczenia pola wyboru
+    num_pages = 1
+    if st.session_state.pdf_bytes:
+        try:
+            reader_check = PdfReader(io.BytesIO(st.session_state.pdf_bytes))
+            num_pages = len(reader_check.pages)
+        except Exception:
+            num_pages = 1 
 
     with col_tools:
         st.markdown("### 🛠️ Narzędzia Edycji")
@@ -469,13 +560,18 @@ def run_pdf_editor():
         # --- KONTROLKI DODAWANIA TEKSTU ---
         st.caption("Dodaj Adnotację Tekstową")
         with st.form("text_annotation_form", clear_on_submit=True):
-            text_content = st.text_input("Tekst Adnotacji", "Wpisz swój tekst tutaj.")
-            page_to_annotate = st.number_input("Strona (1-)", min_value=1, value=1)
-            pos_x = st.number_input("Pozycja X (0-500)", min_value=0, max_value=500, value=100)
-            pos_y = st.number_input("Pozycja Y (0-700)", min_value=0, max_value=700, value=700)
+            text_content = st.text_area("Tekst Adnotacji", "Wpisz swój tekst tutaj.")
+            
+            page_to_annotate = st.number_input(f"Strona (1-{num_pages})", min_value=1, max_value=num_pages, value=1)
+            
+            st.markdown("**Pozycja na stronie (punkty)**")
+            c_x, c_y = st.columns(2)
+            # Domyślny rozmiar strony Letter: ~612x792 pt. 50, 750 to górny lewy róg.
+            pos_x = c_x.number_input("Pozycja X (od lewej)", min_value=0, max_value=600, value=50)
+            pos_y = c_y.number_input("Pozycja Y (od dołu)", min_value=0, max_value=780, value=750)
             text_size = st.number_input("Rozmiar Tekstu", min_value=8, max_value=40, value=12)
 
-            if st.form_submit_button("➕ Dodaj do Listy Adnotacji"):
+            if st.form_submit_button("➕ Dodaj do Listy Adnotacji", type="primary"):
                 if not st.session_state.pdf_bytes:
                     st.warning("Najpierw wczytaj plik PDF.")
                 else:
@@ -486,17 +582,18 @@ def run_pdf_editor():
                         'y': int(pos_y),
                         'size': int(text_size)
                     })
-                    st.success(f"Dodano adnotację na stronę {page_to_annotate}!")
+                    st.toast(f"Dodano adnotację na stronę {page_to_annotate}!")
+                    st.rerun()
         
         # --- LISTA ADNOTACJI ---
         if st.session_state.current_pdf_annotations:
             st.markdown("---")
-            st.subheader("Lista Adnotacji")
+            st.subheader("Lista Oczekujących Adnotacji")
             for i, ann in enumerate(st.session_state.current_pdf_annotations):
-                 st.caption(f"Strona {ann['page']}: {ann['text'][:30]}...")
+                 st.caption(f"**Strona {ann['page']}** (X={ann['x']}, Y={ann['y']}): *{ann['text'][:30]}...*")
 
         st.markdown("---")
-        if st.button("🗑️ Wyczyść Adnotacje"):
+        if st.button("🗑️ Wyczyść Listę Adnotacji"):
             st.session_state.current_pdf_annotations = []
             st.rerun()
 
@@ -504,30 +601,33 @@ def run_pdf_editor():
         uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
         
         if uploaded_pdf:
+            # Wczytanie pliku
             st.session_state.pdf_bytes = uploaded_pdf.read()
             st.session_state.last_pdf = uploaded_pdf.name
-            st.session_state.current_pdf_annotations = []
-            st.success("Plik PDF wczytany. Możesz dodawać adnotacje.")
-            # Nie używamy st.rerun(), bo chcemy, aby dane były natychmiast edytowalne
+            st.session_state.current_pdf_annotations = [] # Wyczyść stare adnotacje przy nowym pliku
+            st.success(f"Plik **{uploaded_pdf.name}** wczytany. Liczba stron: {num_pages}.")
+            st.rerun() 
 
         if st.session_state.pdf_bytes:
             st.subheader("Podgląd i Zapis")
             
-            # 1. Wyświetlanie PDF (używamy wbudowanego wyświetlacza)
+            # Podgląd oryginalnego pliku (Streamlit nie osadza PDF, więc oferujemy pobieranie)
             st.download_button(
-                label="👁️ Kliknij, aby wyświetlić oryginalny PDF",
+                label="👁️ Pobierz Oryginalny PDF (Podgląd)",
                 data=st.session_state.pdf_bytes,
                 file_name=st.session_state.last_pdf,
-                mime="application/pdf"
+                mime="application/pdf",
+                help="Kliknij, aby otworzyć w przeglądarce i sprawdzić strony/pozycje."
             )
-            st.info("Streamlit nie osadza plików PDF natywnie. Kliknij, aby pobrać i wyświetlić w nowej karcie/programie.")
 
             # 2. GENEROWANIE NOWEGO PDF
-            if st.button("💾 Zastosuj Adnotacje i Pobierz Nowy PDF"):
+            if st.button("💾 Zastosuj Adnotacje i Pobierz Nowy PDF", type="primary"):
                 
                 if not st.session_state.current_pdf_annotations:
                     st.warning("Nie dodano żadnych adnotacji do zastosowania.")
-                else:
+                    st.stop()
+                
+                with st.spinner("Generowanie nowego pliku PDF..."):
                     try:
                         reader = PdfReader(io.BytesIO(st.session_state.pdf_bytes))
                         writer = PdfWriter()
@@ -543,21 +643,25 @@ def run_pdf_editor():
                             ]
                             
                             if annotations_to_add:
-                                # Użycie reportlab do utworzenia warstwy z adnotacjami
+                                # Utworzenie warstwy z adnotacjami za pomocą ReportLab
                                 overlay_buffer = io.BytesIO()
+                                # ReportLab używa domyślnie 72 DPI, pagesize=letter (612x792 pt)
                                 overlay_pdf = reportlab_canvas.Canvas(overlay_buffer, pagesize=letter)
                                 
-                                # ReportLab używa innego układu współrzędnych (dół-lewo)
+                                # Dodanie adnotacji
                                 for ann in annotations_to_add:
-                                    # Y=0 to dół, Y=792 to góra (dla A4 letter)
+                                    # ReportLab rysuje od dołu do góry (0,0 to lewy dolny róg)
                                     overlay_pdf.setFont("Helvetica", ann['size'])
+                                    # Użycie drawString do dodania tekstu
                                     overlay_pdf.drawString(ann['x'], ann['y'], ann['text'])
 
                                 overlay_pdf.save()
-                                overlay_reader = PdfReader(overlay_buffer)
                                 
-                                # Scalenie oryginalnej strony z warstwą adnotacji
-                                current_page.merge_page(overlay_reader.pages[0])
+                                # Scalenie warstwy z oryginalną stroną za pomocą pypdf
+                                overlay_reader = PdfReader(overlay_buffer)
+                                overlay_page = overlay_reader.pages[0]
+                                
+                                current_page.merge_page(overlay_page)
 
                             writer.add_page(current_page)
                         
@@ -572,15 +676,14 @@ def run_pdf_editor():
                             mime="application/pdf"
                         )
                         st.success("PDF został wygenerowany z adnotacjami!")
-                        st.session_state.pdf_bytes = final_buffer.getvalue() # Załaduj nowy PDF do podglądu (opcjonalnie)
-                        st.session_state.current_pdf_annotations = []
-                        st.rerun() # Odśwież widok
+                        st.session_state.current_pdf_annotations = [] # Wyczyść listę po zapisie
+                        st.rerun() 
 
                     except Exception as e:
-                        st.error(f"Błąd podczas edycji PDF: {e}")
-
+                        st.error(f"Wystąpił nieoczekiwany błąd podczas edycji PDF: {e}")
+                        
 # ==========================================
-# EKRAN STARTOWY
+# EKRAN STARTOWY (MENU)
 # ==========================================
 
 def home_screen():
@@ -595,7 +698,7 @@ def home_screen():
         
         st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
-        if st.button("📄 EDYTOR PDF", use_container_width=True, help="Wczytywanie i adnotowanie plików PDF (silnik C/C++)"):
+        if st.button("📄 EDYTOR PDF (Tekst i Struktura)", use_container_width=True, help="Wczytywanie i dodawanie tekstu do plików PDF (pypdf)"):
             go_pdf()
 
 # ==========================================
@@ -612,5 +715,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
