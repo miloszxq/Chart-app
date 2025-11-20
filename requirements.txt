@@ -3,3 +3,6 @@ pandas
 matplotlib
 numpy
 openpyxl
+streamlit-drawable-canvas
+pymupdf
+Pillow
