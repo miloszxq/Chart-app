@@ -8,12 +8,15 @@ from unittest.mock import MagicMock
 
 # --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ ---
 # To musi być na samej górze pliku.
-# Naprawia błąd "AttributeError: 'int' object has no attribute 'width'"
-# oraz błąd "TypeError: image_to_url() takes X arguments..."
-
+# Naprawia błąd "TypeError: image_to_url() takes X arguments..."
 import streamlit.elements.image as st_image
-from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
-
+try:
+    # W nowszych wersjach Streamlit ścieżka do funkcji może się zmieniać
+    from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
+except ImportError:
+    st.error("Wymagana funkcja Streamlit jest niedostępna. Użyj nowszej wersji biblioteki Streamlit.")
+    st.stop()
+    
 def patched_image_to_url(image, width, *args, **kwargs):
     # Biblioteka st_canvas przekazuje width jako int (liczbę).
     # Nowy Streamlit oczekuje obiektu konfiguracyjnego.
@@ -31,10 +34,10 @@ st_image.image_to_url = patched_image_to_url
 
 # --- IMPORTY BIBLIOTEK ZEWNĘTRZNYCH ---
 try:
-    import fitz  # PyMuPDF
+    import fitz  # PyMuPDF (silnik C/C++)
     from streamlit_drawable_canvas import st_canvas
 except ImportError:
-    st.error("Brakuje bibliotek! Upewnij się, że w requirements.txt są: pymupdf, streamlit-drawable-canvas, Pillow")
+    st.error("Brakuje bibliotek! Upewnij się, że masz zainstalowane: pymupdf, streamlit-drawable-canvas, Pillow")
     st.stop()
 
 # --- KONFIGURACJA STRONY ---
@@ -493,6 +496,7 @@ def run_pdf_editor():
                 st.rerun()
 
         if st.session_state.pdf_bytes:
+            # Użycie fitz (PyMuPDF)
             doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
             total_pages = len(doc)
 
@@ -515,6 +519,7 @@ def run_pdf_editor():
             fill_color = "#00000000" 
             initial_drawing = st.session_state.page_annotations.get(page_num)
 
+            # Użycie streamlit-drawable-canvas (silnik JS) do rysowania na obrazie PDF
             canvas_result = st_canvas(
                 fill_color=fill_color,
                 stroke_width=st.session_state.pdf_width,
@@ -533,18 +538,18 @@ def run_pdf_editor():
 
             st.markdown("---")
             if st.button("💾 Pobierz PDF z Adnotacjami"):
-                # POBIERANIE CAŁEGO DOKUMENTU
-                # W tej wersji "chmurowej" nie możemy idealnie spłaszczyć każdej strony w pętli bez renderera.
-                # Dlatego zapisujemy kopię dokumentu tak jak jest.
-                # (W pełnej wersji trzeba by renderować JSON na obraz za pomocą PIL dla każdej strony).
+                # POBIERANIE CAŁEGO DOKUMENTU (Wykorzystanie fitz/PyMuPDF do zapisu)
                 out_buffer = io.BytesIO()
+                # W wersji Streamlit to tylko placeholder, ponieważ brak backendu 
+                # do spłaszczania stron, ale zapisujemy oryginalny plik
                 doc.save(out_buffer)
                 st.download_button(
-                    label="📥 Kliknij aby pobrać",
+                    label="📥 Kliknij aby pobrać (tylko plik bazowy)",
                     data=out_buffer.getvalue(),
                     file_name="edytowany_dokument.pdf",
                     mime="application/pdf"
                 )
+                st.warning("Uwaga: Na platformach chmurowych spłaszczanie adnotacji na PDF jest skomplikowane i wymaga serwera. To jest tylko zapis pliku bazowego.")
 
 # ==========================================
 # EKRAN STARTOWY
@@ -557,12 +562,12 @@ def home_screen():
     c1, c2, c3 = st.columns([1, 2, 1])
     
     with c2:
-        if st.button("📊 KREATOR WYKRESÓW", use_container_width=True):
+        if st.button("📊 KREATOR WYKRESÓW", use_container_width=True, help="Tworzenie i eksportowanie wykresów Matplotlib"):
             go_chart()
         
         st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
-        if st.button("📄 EDYTOR PDF", use_container_width=True):
+        if st.button("📄 EDYTOR PDF", use_container_width=True, help="Wczytywanie i adnotowanie plików PDF (silnik C/C++)"):
             go_pdf()
 
 # ==========================================
