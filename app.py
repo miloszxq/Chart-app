@@ -13,14 +13,18 @@ from unittest.mock import MagicMock
 import streamlit.elements.image as st_image
 from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
 
-def patched_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji=False):
-    # Biblioteka canvas przekazuje 'width' jako int, a nowy Streamlit oczekuje obiektu konfiguracyjnego.
-    # Tworzymy "fałszywy" obiekt konfiguracyjny, który ma atrybut .width
+def patched_image_to_url(image, width, *args, **kwargs):
+    """
+    Elastyczna łatka:
+    - jeśli width jest int, zastępujemy go obiektem z atrybutem .width (MagicMock)
+    - przekazujemy dokładnie te dodatkowe argumenty, które zostały użyte przy wywołaniu
+    (tak unikamy problemu z różnymi sygnaturami między wersjami Streamlit).
+    """
     if isinstance(width, int):
         mock_config = MagicMock()
         mock_config.width = width
         width = mock_config
-    return original_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji)
+    return original_image_to_url(image, width, *args, **kwargs)
 
 # Podmieniamy oryginalną funkcję naszą naprawioną wersją
 st_image.image_to_url = patched_image_to_url
@@ -54,12 +58,12 @@ st.markdown("""
 # --- STAŁE GLOBALNE ---
 REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-Kropka (-.)"]
 LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
-WIDTH_OPTIONS = [1.0, 2.0, 3.0, 4.0, 5.0] 
-DEFAULT_REF_LINE_STYLE = "Ciągła (-)" 
-DEFAULT_REF_LINE_WIDTH = 1.0 
+WIDTH_OPTIONS = [1.0, 2.0, 3.0, 4.0, 5.0]
+DEFAULT_REF_LINE_STYLE = "Ciągła (-)"
+DEFAULT_REF_LINE_WIDTH = 1.0
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
-SERIES_NAMES = [f"Y{i+1}" for i in range(10)] 
+SERIES_NAMES = [f"Y{i+1}" for i in range(10)]
 POINTS_OPTIONS = list(range(1, 51))
 
 SPECIAL_SYMBOLS = {
@@ -87,7 +91,6 @@ def go_chart():
 def go_pdf():
     st.session_state.current_view = "pdf_editor"
     st.rerun()
-
 
 # ==========================================
 # MODUŁ 1: KREATOR WYKRESÓW
@@ -117,12 +120,15 @@ def run_chart_creator():
                 df = pd.read_excel(uploaded_file)
             else:
                 uploaded_file.seek(0)
-                try: df = pd.read_csv(uploaded_file, sep=None, engine='python')
-                except: 
+                try:
+                    df = pd.read_csv(uploaded_file, sep=None, engine='python')
+                except:
                     uploaded_file.seek(0)
-                    try: df = pd.read_csv(uploaded_file, delim_whitespace=True)
-                    except: uploaded_file.seek(0); df = pd.read_csv(uploaded_file, sep=',')
-            
+                    try:
+                        df = pd.read_csv(uploaded_file, delim_whitespace=True)
+                    except:
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, sep=',')
             df.columns = [str(c) for c in df.columns]
             df = df.replace(r'^\s*$', np.nan, regex=True).dropna(how='all')
             if df.shape[1] < 2: return None
@@ -134,12 +140,13 @@ def run_chart_creator():
                 else: new_col_name = f'Y{i}'
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
                 new_cols[col] = new_col_name
-            
+
             df = df.rename(columns=new_cols)
             # Użycie raw string r'' aby uniknąć SyntaxWarning
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
-        except Exception: return None
+        except Exception:
+            return None
 
     def create_chart_figure(df, x_col, y_cols, config, export_mode=None):
         if export_mode in ['print_color', 'print_bw']:
@@ -149,7 +156,7 @@ def run_chart_creator():
 
         fig, ax = plt.subplots(figsize=(10, 6), facecolor=bg_color)
         ax.set_facecolor(bg_color)
-        
+
         if config['origin_at_zero']:
             ax.spines['left'].set_position('zero')
             ax.spines['bottom'].set_position('zero')
@@ -158,7 +165,7 @@ def run_chart_creator():
         else:
             ax.spines['right'].set_visible(True)
             ax.spines['top'].set_visible(True)
-        
+
         for spine in ax.spines.values(): spine.set_color(text_color)
         ax.tick_params(colors=text_color)
         ax.yaxis.label.set_color(text_color)
@@ -166,22 +173,26 @@ def run_chart_creator():
         ax.title.set_color(text_color)
 
         color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        
+
         for i, col in enumerate(y_cols):
             if col not in df.columns: continue
             cfg = st.session_state.series_config.get(col, {'color': color_cycle[i % len(color_cycle)], 'alias': col})
             alias = cfg['alias']
-            
+
             if export_mode == 'print_bw':
                 color, linestyle = 'black', ['-', '--', ':', '-.'][i % 4]
             else:
                 color, linestyle = cfg['color'], LINE_STYLE_MAP.get(config['line_style'], '-')
 
             if config['type'] == "Liniowy":
-                if len(df) <= 1: ax.plot(df[x_col], df[col], label=alias, color=color, linestyle='None', linewidth=config['width'], marker='o')
-                else: ax.plot(df[x_col], df[col], label=alias, color=color, linestyle=linestyle, linewidth=config['width'], marker='o' if config['markers'] else None)
-            elif config['type'] == "Punktowy": ax.scatter(df[x_col], df[col], label=alias, color=color, s=30)
-            elif config['type'] == "Słupkowy": ax.bar(df[x_col], df[col], label=alias, color=color, alpha=0.7)
+                if len(df) <= 1:
+                    ax.plot(df[x_col], df[col], label=alias, color=color, linestyle='None', linewidth=config['width'], marker='o')
+                else:
+                    ax.plot(df[x_col], df[col], label=alias, color=color, linestyle=linestyle, linewidth=config['width'], marker='o' if config['markers'] else None)
+            elif config['type'] == "Punktowy":
+                ax.scatter(df[x_col], df[col], label=alias, color=color, s=30)
+            elif config['type'] == "Słupkowy":
+                ax.bar(df[x_col], df[col], label=alias, color=color, alpha=0.7)
 
         for line in st.session_state.ref_lines:
             l_color = 'black' if export_mode == 'print_bw' else line.get('color', DEFAULT_REF_LINE_COLOR)
@@ -199,12 +210,12 @@ def run_chart_creator():
         if config['xlim'][1] is not None: ax.set_xlim(right=config['xlim'][1])
         if config['ylim'][0] is not None: ax.set_ylim(bottom=config['ylim'][0])
         if config['ylim'][1] is not None: ax.set_ylim(top=config['ylim'][1])
-        
+
         if config['log_x']: ax.set_xscale('log')
         if config['log_y']: ax.set_yscale('log')
         if config['grid']: ax.grid(True, linestyle='--', alpha=0.3, color=grid_color)
         else: ax.grid(False)
-            
+
         ax.set_title(config['title'])
         ax.set_xlabel(config['x_label'] if config['x_label'] else x_col)
         ax.set_ylabel(config['y_label'] if config['y_label'] else "Wartość Y")
@@ -216,7 +227,7 @@ def run_chart_creator():
         buf = io.BytesIO()
         fig_export = create_chart_figure(st.session_state.df_chart, st.session_state.x_col, st.session_state.y_cols, st.session_state.chart_config, export_mode=mode)
         fig_export.savefig(buf, format=format, dpi=300)
-        plt.close(fig_export) 
+        plt.close(fig_export)
         buf.seek(0)
         return st.download_button(label=label, data=buf, file_name=f"{file_prefix}_{mode}.{format}" if mode else f"{file_prefix}.{format}", mime=f"image/{format}")
 
@@ -225,37 +236,41 @@ def run_chart_creator():
         st.toast(f"Wybrano: {symbol}", icon='📋')
 
     # --- UI KREATORA ---
-    
+
     with st.sidebar:
         st.header("1. Źródło Danych")
         is_manual_mode = (st.session_state.get('data_source', "Wpisz Ręcznie") == "Wpisz Ręcznie")
-        
-        with st.container(border=True):
+
+        with st.container():
             st.subheader("Opcje Danych")
             data_source = st.radio("Tryb:", ["Wpisz Ręcznie", "Wgraj Plik"], horizontal=True, key='data_source')
             if data_source == "Wgraj Plik":
                 uploaded_file = st.file_uploader("Excel, CSV, TXT", type=['csv', 'txt', 'xlsx', 'xls'])
                 if uploaded_file:
-                    if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != uploaded_file.file_id:
+                    # zabezpieczenie przed wielokrotnym przetworzeniem tego samego pliku
+                    last_id = getattr(uploaded_file, "file_id", None) or getattr(uploaded_file, "name", None)
+                    if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != last_id:
                         df_new = process_uploaded_file(uploaded_file)
-                        if df_new is not None: 
+                        if df_new is not None:
                             st.session_state.df = df_new
                             st.session_state.annotations = []
                             st.session_state.ref_lines = []
                             st.session_state.series_config = {}
                             st.session_state.num_series = len([col for col in df_new.columns if col.startswith('Y')])
                             st.session_state.num_points = len(df_new)
-                            st.session_state.last_upload_hash = uploaded_file.file_id
+                            st.session_state.last_upload_hash = last_id
                             st.success(f"Wczytano! ({st.session_state.num_points} pkt).")
                             st.rerun()
 
-        with st.container(border=True):
+        with st.container():
             st.subheader("Rozmiar")
             if is_manual_mode:
                 c1, c2 = st.columns(2)
                 num_series_input = c1.selectbox("Serii (Y)", list(range(1, 11)), index=st.session_state.num_series - 1, key='sel_num_series')
-                try: cur_idx = POINTS_OPTIONS.index(st.session_state.num_points)
-                except: cur_idx = 0
+                try:
+                    cur_idx = POINTS_OPTIONS.index(st.session_state.num_points)
+                except:
+                    cur_idx = 0
                 num_points_input = c2.selectbox("Punktów (X)", POINTS_OPTIONS, index=cur_idx, key='sel_num_points')
 
                 if num_series_input != st.session_state.num_series or num_points_input != st.session_state.num_points:
@@ -267,8 +282,9 @@ def run_chart_creator():
                     for col in current_cols:
                         series_data = old_df[col].astype(float) if col in old_df.columns else pd.Series(np.zeros(len(old_df))).astype(float)
                         if len(series_data) < st.session_state.num_points:
-                             new_data = pd.concat([series_data, pd.Series(np.zeros(st.session_state.num_points - len(series_data))).astype(float)], ignore_index=True)
-                        else: new_data = series_data.head(st.session_state.num_points)
+                            new_data = pd.concat([series_data, pd.Series(np.zeros(st.session_state.num_points - len(series_data))).astype(float)], ignore_index=True)
+                        else:
+                            new_data = series_data.head(st.session_state.num_points)
                         new_df[col] = new_data.fillna(0).astype(float)
                     if (new_df['X'] == 0).all(): new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
                     st.session_state.df = new_df
@@ -280,7 +296,7 @@ def run_chart_creator():
         y_cols = [col for col in st.session_state.df.columns if col.startswith('Y')]
 
         st.header("2. Opcje Wykresu")
-        with st.container(border=True):
+        with st.container():
             st.subheader("Typ")
             chart_type = st.selectbox("Typ", ["Liniowy", "Punktowy", "Słupkowy"], key='sel_type')
             origin_at_zero = st.checkbox("Oś w (0,0)", False, key='sel_origin')
@@ -288,7 +304,7 @@ def run_chart_creator():
             x_label = st.text_input("Label X", "", placeholder="Kolumna X", key='sel_xlabel')
             y_label = st.text_input("Label Y", "", placeholder="Wartość Y", key='sel_ylabel')
 
-        with st.container(border=True):
+        with st.container():
             st.subheader("Granice")
             c1, c2 = st.columns(2)
             xm = c1.number_input("X Min", value=None, format="%f")
@@ -296,7 +312,7 @@ def run_chart_creator():
             ym = c1.number_input("Y Min", value=None, format="%f")
             yM = c2.number_input("Y Max", value=None, format="%f")
 
-        with st.container(border=True):
+        with st.container():
             st.subheader("Styl")
             c1, c2 = st.columns(2)
             line_style = c1.selectbox("Linia", REF_LINE_STYLES, key='sel_l_style')
@@ -312,7 +328,7 @@ def run_chart_creator():
             st.text_area("Symbol:", st.session_state.symbol_to_copy, key="copy_area", height=35)
             for cat, syms in SPECIAL_SYMBOLS.items():
                 st.caption(f"**{cat}**")
-                cols = st.columns(6) 
+                cols = st.columns(6)
                 for i, s in enumerate(syms):
                     cols[i%6].button(s, key=f"s_{cat}_{s}", on_click=set_symbol_to_copy, args=(s,))
 
@@ -330,7 +346,7 @@ def run_chart_creator():
                 with st.form("data_form"):
                     new_df_data = {}
                     for r in range(st.session_state.num_points):
-                        with st.container(border=True):
+                        with st.container():
                             st.caption(f"**Pkt {r+1}**")
                             cols = st.columns([1] + [1]*len(y_cols))
                             new_x = cols[0].number_input(f"X {r+1}", value=float(st.session_state.df.loc[r, x_col]), key=f"dX_{r}", format="%f")
@@ -340,7 +356,8 @@ def run_chart_creator():
                                 new_df_data[(r, yc)] = ny
                     if st.form_submit_button("Zapisz"):
                         temp_df = st.session_state.df.copy()
-                        for (r, c), v in new_df_data.items(): temp_df.loc[r, c] = v
+                        for (r, c), v in new_df_data.items():
+                            temp_df.loc[r, c] = v
                         st.session_state.df = temp_df
                         st.rerun()
 
@@ -350,7 +367,7 @@ def run_chart_creator():
                 if col not in st.session_state.series_config: st.session_state.series_config[col] = {'color': default_colors[i % len(default_colors)], 'alias': col}
                 cfg = st.session_state.series_config[col]
                 st.markdown(f"**{col}**")
-                with st.container(border=True):
+                with st.container():
                     c1, c2 = st.columns([1, 2])
                     nc = c1.color_picker("Kol", cfg['color'], key=f"c_{col}")
                     na = c2.text_input("Nazwa", cfg['alias'], key=f"a_{col}")
@@ -360,7 +377,7 @@ def run_chart_creator():
         with st.expander("📝 Adnotacje", expanded=True):
             def_x = float(st.session_state.df_chart[x_col].mean()) if not st.session_state.df_chart.empty else 0.0
             def_y = float(st.session_state.df_chart[y_cols[0]].mean()) if not st.session_state.df_chart.empty and len(y_cols)>0 else 0.0
-            with st.container(border=True):
+            with st.container():
                 with st.form("add_note", clear_on_submit=True):
                     c1, c2 = st.columns(2)
                     nx = c1.number_input("X", value=def_x, format="%f")
@@ -374,7 +391,7 @@ def run_chart_creator():
                 notes_keep = []
                 rerun = False
                 for i, n in enumerate(st.session_state.annotations):
-                    with st.container(border=True):
+                    with st.container():
                         cd, cx, cy = st.columns([0.5, 1.5, 1.5])
                         if cd.button("❌", key=f"rmn_{i}"): rerun = True; continue
                         nx = cx.number_input("X", value=n['x'], key=f"nx_{i}", format="%f")
@@ -384,10 +401,11 @@ def run_chart_creator():
                 if rerun or len(notes_keep) != len(st.session_state.annotations):
                     st.session_state.annotations = notes_keep
                     st.rerun()
-                else: st.session_state.annotations = notes_keep
+                else:
+                    st.session_state.annotations = notes_keep
 
         with st.expander("📏 Linie Ref.", expanded=True):
-            with st.container(border=True):
+            with st.container():
                 with st.form("add_line", clear_on_submit=True):
                     c1, c2 = st.columns(2)
                     lx = c1.selectbox("Oś", ["X", "Y"])
@@ -403,7 +421,7 @@ def run_chart_creator():
                 lines_keep = []
                 rerun = False
                 for i, l in enumerate(st.session_state.ref_lines):
-                    with st.container(border=True):
+                    with st.container():
                         cd, ca, cv = st.columns([0.5, 1, 2])
                         if cd.button("❌", key=f"rml_{i}"): rerun = True; continue
                         na = ca.selectbox("Oś", ["X", "Y"], index=0 if l['axis']=='X' else 1, key=f"la_{i}")
@@ -416,14 +434,15 @@ def run_chart_creator():
                 if rerun or len(lines_keep) != len(st.session_state.ref_lines):
                     st.session_state.ref_lines = lines_keep
                     st.rerun()
-                else: st.session_state.ref_lines = lines_keep
+                else:
+                    st.session_state.ref_lines = lines_keep
 
     with col_plot:
         chart_title = st.text_input("Tytuł Wykresu", "Mój Wykres", key='title_input', placeholder="Tytuł")
         st.session_state.chart_config['title'] = chart_title
         fig_screen = create_chart_figure(st.session_state.df_chart, x_col, y_cols, st.session_state.chart_config, export_mode=None)
         st.pyplot(fig_screen)
-        
+
         st.divider()
         st.subheader("💾 Pobierz")
         c1, c2, c3 = st.columns(3)
@@ -466,12 +485,12 @@ def run_pdf_editor():
     # LEWY PASEK NARZĘDZI
     with col_tools:
         st.markdown("### Narzędzia")
-        
+
         # Przyciski narzędzi (Pionowo)
         if st.button("🖊️ Ołówek", use_container_width=True): st.session_state.pdf_tool = "freedraw"
         if st.button("🔤 Tekst", use_container_width=True): st.session_state.pdf_tool = "text"
         if st.button("✋ Przesuń", use_container_width=True): st.session_state.pdf_tool = "transform"
-        
+
         with st.expander("Kształty"):
             if st.button("📏 Linia", use_container_width=True): st.session_state.pdf_tool = "line"
             if st.button("⬜ Prostokąt", use_container_width=True): st.session_state.pdf_tool = "rect"
@@ -479,11 +498,11 @@ def run_pdf_editor():
 
         st.markdown("---")
         st.markdown(f"**Aktywne: {st.session_state.pdf_tool.upper()}**")
-        
+
         # Konfiguracja narzędzia
         st.session_state.pdf_color = st.color_picker("Kolor", st.session_state.pdf_color)
         st.session_state.pdf_width = st.selectbox("Grubość", [1, 3, 5, 10, 15], index=1)
-        
+
         text_val = ""
         if st.session_state.pdf_tool == "text":
             text_val = st.text_input("Wpisz tekst:", "Twój tekst")
@@ -492,7 +511,7 @@ def run_pdf_editor():
     # PRAWY OBSZAR ROBOCZY
     with col_workspace:
         uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
-        
+
         if uploaded_pdf:
             if 'last_pdf' not in st.session_state or st.session_state.last_pdf != uploaded_pdf.name:
                 st.session_state.pdf_bytes = uploaded_pdf.read()
@@ -517,7 +536,7 @@ def run_pdf_editor():
                 if st.button("▶") and st.session_state.current_page < total_pages - 1:
                     st.session_state.current_page += 1
                     st.rerun()
-            
+
             # Renderowanie
             page_num = st.session_state.current_page
             page = doc.load_page(page_num)
@@ -525,7 +544,7 @@ def run_pdf_editor():
             img = Image.open(io.BytesIO(pix.tobytes("png")))
 
             # Canvas
-            fill_color = "#00000000" 
+            fill_color = "#00000000"
             initial_drawing = st.session_state.page_annotations.get(page_num)
 
             canvas_result = st_canvas(
@@ -541,7 +560,7 @@ def run_pdf_editor():
                 key=f"canvas_{page_num}",
             )
 
-            if canvas_result.json_data is not None:
+            if canvas_result and getattr(canvas_result, "json_data", None) is not None:
                 st.session_state.page_annotations[page_num] = canvas_result.json_data
 
             # Zapis
@@ -560,15 +579,15 @@ def run_pdf_editor():
 def home_screen():
     st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
     st.markdown("<h1 style='text-align: center; margin-bottom: 50px;'>Wybierz Narzędzie</h1>", unsafe_allow_html=True)
-    
+
     c1, c2, c3 = st.columns([1, 2, 1])
-    
+
     with c2:
         if st.button("📊 KREATOR WYKRESÓW", use_container_width=True):
             go_chart()
-        
+
         st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-        
+
         if st.button("📄 EDYTOR PDF", use_container_width=True):
             go_pdf()
 
