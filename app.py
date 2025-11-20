@@ -6,17 +6,9 @@ import io
 from PIL import Image
 from unittest.mock import MagicMock
 
-# --- KONFIGURACJA BIBLIOTEK DLA EDYTORA PDF ---
-try:
-    from pypdf import PdfReader, PdfWriter 
-    from reportlab.pdfgen import canvas as reportlab_canvas
-    from reportlab.lib.pagesizes import letter
-except ImportError:
-    st.error("Błąd: Brakuje bibliotek pypdf lub reportlab. Zainstaluj je za pomocą: `pip install pypdf reportlab`")
-    st.stop()
-
-
-# --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ (Potrzebny, jeśli używamy st_canvas, ale zostawiamy prewencyjnie) ---
+# --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ ---
+# Ten hotfix jest potrzebny, ponieważ niektóre wewnętrzne funkcje Streamlit
+# są używane do renderowania wykresów/obrazów.
 import streamlit.elements.image as st_image
 try:
     from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
@@ -42,7 +34,7 @@ except AttributeError:
 
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
+st.set_page_config(layout="wide", page_title="Chart Master")
 
 # --- CSS (STYLIZACJA) ---
 st.markdown("""
@@ -65,7 +57,7 @@ REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-
 LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
 WIDTH_OPTIONS = [1.0, 2.0, 3.0, 4.0, 5.0] 
 DEFAULT_REF_LINE_STYLE = "Ciągła (-)" 
-DEFAULT_REF_LINE_WIDTH = 1.0 
+DEFAULT_REF_LINE_WIDTH = 1.0
 DEFAULT_REF_LINE_COLOR = "#AAAAAA"
 DARK_BACKGROUND = "#2A2A2A"
 SERIES_NAMES = [f"Y{i+1}" for i in range(10)] 
@@ -79,51 +71,42 @@ SPECIAL_SYMBOLS = {
 }
 
 # ==========================================
-# ZARZĄDZANIE STANEM (NAWIGACJA)
+# ZARZĄDZANIE STANEM (NAWIGACJA - Uproszczona)
 # ==========================================
 
-if 'current_view' not in st.session_state:
-    st.session_state.current_view = "home"
-
-def go_home():
-    st.session_state.current_view = "home"
-    st.rerun()
+# Usuwamy logikę nawigacji do PDF, zostawiamy tylko funkcje do odświeżania
 
 def go_chart():
-    st.session_state.current_view = "chart_creator"
-    # Inicjalizacja stanu dla Kreatora Wykresów
-    if 'num_series' not in st.session_state: st.session_state.num_series = 1
-    if 'num_points' not in st.session_state: st.session_state.num_points = 10
-    if 'df' not in st.session_state: st.session_state.df = pd.DataFrame({"X": np.arange(1, 11).astype(float), "Y1": np.random.rand(10) * 10})
-    if 'annotations' not in st.session_state: st.session_state.annotations = []
-    if 'ref_lines' not in st.session_state: st.session_state.ref_lines = []
-    if 'series_config' not in st.session_state: 
+    # Uproszczone: po prostu odświeża stan
+    if 'num_series' not in st.session_state: 
+        st.session_state.num_series = 1
+        st.session_state.num_points = 10
+        st.session_state.df = pd.DataFrame({"X": np.arange(1, 11).astype(float), "Y1": np.random.rand(10) * 10})
+        st.session_state.annotations = []
+        st.session_state.ref_lines = []
         default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         st.session_state.series_config = {"Y1": {'color': default_colors[0], 'alias': 'Y1'}}
-    if 'symbol_to_copy' not in st.session_state: st.session_state.symbol_to_copy = ""
+        st.session_state.symbol_to_copy = ""
     st.rerun()
-
-def go_pdf():
-    st.session_state.current_view = "pdf_editor"
-    # Inicjalizacja stanu dla Edytora PDF
-    if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
-    if 'current_pdf_annotations' not in st.session_state: st.session_state.current_pdf_annotations = []
-    if 'last_pdf' not in st.session_state: st.session_state.last_pdf = "dokument.pdf"
-    st.rerun()
-
 
 # ==========================================
-# MODUŁ 1: KREATOR WYKRESÓW (Pełna wersja)
+# MODUŁ: KREATOR WYKRESÓW (Pełna wersja)
 # ==========================================
 
 def run_chart_creator():
     c_back, c_tit = st.columns([1, 10])
     with c_back:
-        if st.button("🏠 Menu", use_container_width=True): go_home()
+        # Przycisk HOME - teraz działa jako przycisk do odświeżenia/resetu stanu
+        if st.button("🔄 Reset", use_container_width=True): 
+             # Usuń klucze, aby wymusić nową inicjalizację stanu
+            for key in list(st.session_state.keys()):
+                if key in ['num_series', 'num_points', 'df', 'annotations', 'ref_lines', 'series_config', 'symbol_to_copy', 'chart_config', 'data_source', 'last_upload_hash']:
+                    del st.session_state[key]
+            go_chart()
     with c_tit:
         st.subheader("📊 Kreator Wykresów")
 
-    # Inicjalizacja stanu (tylko na wypadek bezpośredniego dostępu)
+    # Inicjalizacja stanu (na wypadek bezpośredniego dostępu)
     if 'num_series' not in st.session_state: go_chart() 
     
     def process_uploaded_file(uploaded_file):
@@ -527,191 +510,14 @@ def run_chart_creator():
             st.markdown("**Druk (Tło Białe / Cz-B)**")
             get_image_download_link(fig_screen, "png", "print_bw", "PNG", fp)
             get_image_download_link(fig_screen, "pdf", "print_bw", "PDF", fp)
-
-# ==========================================
-# MODUŁ 2: EDYTOR PDF (Naprawiony - pypdf + reportlab)
-# ==========================================
-
-def run_pdf_editor():
-    c_back, c_tit = st.columns([1, 10])
-    with c_back:
-        if st.button("🏠 Menu", use_container_width=True): go_home()
-    with c_tit:
-        st.subheader("📄 Edytor PDF (Tryb Strukturalny - Text)")
-
-    if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
-    if 'current_pdf_annotations' not in st.session_state: st.session_state.current_pdf_annotations = []
-    if 'last_pdf' not in st.session_state: st.session_state.last_pdf = "dokument.pdf"
-    
-    col_tools, col_workspace = st.columns([1, 3])
-    
-    # Ustalanie liczby stron do ograniczenia pola wyboru
-    num_pages = 1
-    if st.session_state.pdf_bytes:
-        try:
-            reader_check = PdfReader(io.BytesIO(st.session_state.pdf_bytes))
-            num_pages = len(reader_check.pages)
-        except Exception:
-            num_pages = 1 
-
-    with col_tools:
-        st.markdown("### 🛠️ Narzędzia Edycji")
-        
-        # --- KONTROLKI DODAWANIA TEKSTU ---
-        st.caption("Dodaj Adnotację Tekstową")
-        with st.form("text_annotation_form", clear_on_submit=True):
-            text_content = st.text_area("Tekst Adnotacji", "Wpisz swój tekst tutaj.")
-            
-            page_to_annotate = st.number_input(f"Strona (1-{num_pages})", min_value=1, max_value=num_pages, value=1)
-            
-            st.markdown("**Pozycja na stronie (punkty)**")
-            c_x, c_y = st.columns(2)
-            # Domyślny rozmiar strony Letter: ~612x792 pt. 50, 750 to górny lewy róg.
-            pos_x = c_x.number_input("Pozycja X (od lewej)", min_value=0, max_value=600, value=50)
-            pos_y = c_y.number_input("Pozycja Y (od dołu)", min_value=0, max_value=780, value=750)
-            text_size = st.number_input("Rozmiar Tekstu", min_value=8, max_value=40, value=12)
-
-            if st.form_submit_button("➕ Dodaj do Listy Adnotacji", type="primary"):
-                if not st.session_state.pdf_bytes:
-                    st.warning("Najpierw wczytaj plik PDF.")
-                else:
-                    st.session_state.current_pdf_annotations.append({
-                        'text': text_content,
-                        'page': int(page_to_annotate),
-                        'x': int(pos_x),
-                        'y': int(pos_y),
-                        'size': int(text_size)
-                    })
-                    st.toast(f"Dodano adnotację na stronę {page_to_annotate}!")
-                    st.rerun()
-        
-        # --- LISTA ADNOTACJI ---
-        if st.session_state.current_pdf_annotations:
-            st.markdown("---")
-            st.subheader("Lista Oczekujących Adnotacji")
-            for i, ann in enumerate(st.session_state.current_pdf_annotations):
-                 st.caption(f"**Strona {ann['page']}** (X={ann['x']}, Y={ann['y']}): *{ann['text'][:30]}...*")
-
-        st.markdown("---")
-        if st.button("🗑️ Wyczyść Listę Adnotacji"):
-            st.session_state.current_pdf_annotations = []
-            st.rerun()
-
-    with col_workspace:
-        uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
-        
-        if uploaded_pdf:
-            # Wczytanie pliku
-            st.session_state.pdf_bytes = uploaded_pdf.read()
-            st.session_state.last_pdf = uploaded_pdf.name
-            st.session_state.current_pdf_annotations = [] # Wyczyść stare adnotacje przy nowym pliku
-            st.success(f"Plik **{uploaded_pdf.name}** wczytany. Liczba stron: {num_pages}.")
-            st.rerun() 
-
-        if st.session_state.pdf_bytes:
-            st.subheader("Podgląd i Zapis")
-            
-            # Podgląd oryginalnego pliku (Streamlit nie osadza PDF, więc oferujemy pobieranie)
-            st.download_button(
-                label="👁️ Pobierz Oryginalny PDF (Podgląd)",
-                data=st.session_state.pdf_bytes,
-                file_name=st.session_state.last_pdf,
-                mime="application/pdf",
-                help="Kliknij, aby otworzyć w przeglądarce i sprawdzić strony/pozycje."
-            )
-
-            # 2. GENEROWANIE NOWEGO PDF
-            if st.button("💾 Zastosuj Adnotacje i Pobierz Nowy PDF", type="primary"):
-                
-                if not st.session_state.current_pdf_annotations:
-                    st.warning("Nie dodano żadnych adnotacji do zastosowania.")
-                    st.stop()
-                
-                with st.spinner("Generowanie nowego pliku PDF..."):
-                    try:
-                        reader = PdfReader(io.BytesIO(st.session_state.pdf_bytes))
-                        writer = PdfWriter()
-
-                        for i, page in enumerate(reader.pages):
-                            page_num = i + 1
-                            current_page = page
-                            
-                            # Filtrowanie adnotacji dla bieżącej strony
-                            annotations_to_add = [
-                                ann for ann in st.session_state.current_pdf_annotations 
-                                if ann['page'] == page_num
-                            ]
-                            
-                            if annotations_to_add:
-                                # Utworzenie warstwy z adnotacjami za pomocą ReportLab
-                                overlay_buffer = io.BytesIO()
-                                # ReportLab używa domyślnie 72 DPI, pagesize=letter (612x792 pt)
-                                overlay_pdf = reportlab_canvas.Canvas(overlay_buffer, pagesize=letter)
-                                
-                                # Dodanie adnotacji
-                                for ann in annotations_to_add:
-                                    # ReportLab rysuje od dołu do góry (0,0 to lewy dolny róg)
-                                    overlay_pdf.setFont("Helvetica", ann['size'])
-                                    # Użycie drawString do dodania tekstu
-                                    overlay_pdf.drawString(ann['x'], ann['y'], ann['text'])
-
-                                overlay_pdf.save()
-                                
-                                # Scalenie warstwy z oryginalną stroną za pomocą pypdf
-                                overlay_reader = PdfReader(overlay_buffer)
-                                overlay_page = overlay_reader.pages[0]
-                                
-                                current_page.merge_page(overlay_page)
-
-                            writer.add_page(current_page)
                         
-                        final_buffer = io.BytesIO()
-                        writer.write(final_buffer)
-                        final_buffer.seek(0)
-
-                        st.download_button(
-                            label="📥 Pobierz Edytowany PDF",
-                            data=final_buffer.getvalue(),
-                            file_name=f"edytowany_{st.session_state.last_pdf}",
-                            mime="application/pdf"
-                        )
-                        st.success("PDF został wygenerowany z adnotacjami!")
-                        st.session_state.current_pdf_annotations = [] # Wyczyść listę po zapisie
-                        st.rerun() 
-
-                    except Exception as e:
-                        st.error(f"Wystąpił nieoczekiwany błąd podczas edycji PDF: {e}")
-                        
-# ==========================================
-# EKRAN STARTOWY (MENU)
-# ==========================================
-
-def home_screen():
-    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align: center; margin-bottom: 50px;'>Wybierz Narzędzie</h1>", unsafe_allow_html=True)
-    
-    c1, c2, c3 = st.columns([1, 2, 1])
-    
-    with c2:
-        if st.button("📊 KREATOR WYKRESÓW", use_container_width=True, help="Tworzenie i eksportowanie wykresów Matplotlib"):
-            go_chart()
-        
-        st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-        
-        if st.button("📄 EDYTOR PDF (Tekst i Struktura)", use_container_width=True, help="Wczytywanie i dodawanie tekstu do plików PDF (pypdf)"):
-            go_pdf()
-
 # ==========================================
 # GŁÓWNY ROUTER
 # ==========================================
 
 def main():
-    if st.session_state.current_view == "home":
-        home_screen()
-    elif st.session_state.current_view == "chart_creator":
-        run_chart_creator()
-    elif st.session_state.current_view == "pdf_editor":
-        run_pdf_editor()
+    # Uruchamiamy Kreator Wykresów bezpośrednio
+    run_chart_creator()
 
 if __name__ == "__main__":
     main()
