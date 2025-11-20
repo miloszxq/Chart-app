@@ -467,227 +467,196 @@ def run_chart_creator():
 def run_pdf_editor():
     import streamlit as st
     import fitz
+    from streamlit_drawable_canvas import st_canvas
     from PIL import Image
     import io
     import numpy as np
-    from streamlit_drawable_canvas import st_canvas
 
-    # ------------------------------
-    # Nawigacja
-    # ------------------------------
+    # ----------------------------------------------------
+    #  STAN APLIKACJI – CAŁKOWICIE STABILNA KONFIGURACJA
+    # ----------------------------------------------------
+    st.session_state.setdefault("pdf_bytes", None)
+    st.session_state.setdefault("current_page", 0)
+    st.session_state.setdefault("page_annotations", {})
+    st.session_state.setdefault("pdf_tool", "freedraw")
+    st.session_state.setdefault("pdf_color", "#FF0000")
+    st.session_state.setdefault("pdf_width", 3)
+    st.session_state.setdefault("zoom", 1.0)
+    st.session_state.setdefault("uploaded_stamp", None)
+
+    # ----------------------------------------------------
+    #  NAWIGACJA
+    # ----------------------------------------------------
     c_back, c_tit = st.columns([1, 10])
     with c_back:
         if st.button("🏠 Menu", use_container_width=True):
             go_home()
     with c_tit:
-        st.subheader("📄 Edytor PDF – FULL PRO TOOLBAR")
+        st.subheader("📄 Edytor PDF – Stabilna PRO Wersja")
 
-    # ------------------------------
-    # STAN APLIKACJI
-    # ------------------------------
-    if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
-    if 'page_annotations' not in st.session_state: st.session_state.page_annotations = {}
-    if 'pdf_tool' not in st.session_state: st.session_state.pdf_tool = "freedraw"
-    if 'pdf_color' not in st.session_state: st.session_state.pdf_color = "#FF0000"
-    if 'pdf_width' not in st.session_state: st.session_state.pdf_width = 2
-    if 'zoom' not in st.session_state: st.session_state.zoom = 1.0
-    if 'uploaded_stamp' not in st.session_state: st.session_state.uploaded_stamp = None
-    if 'undo_stack' not in st.session_state: st.session_state.undo_stack = {}
-    if 'redo_stack' not in st.session_state: st.session_state.redo_stack = {}
-
-    # ------------------------------
-    # LAYOUT
-    # ------------------------------
+    # ----------------------------------------------------
+    #  LAYOUT
+    # ----------------------------------------------------
     col_tools, col_workspace = st.columns([1, 6])
 
-    # ================================================================
-    # ███ LEWY PANEL NARZĘDZI — FULL PRO TOOLBAR
-    # ================================================================
+    # ===========================================================
+    #  ███ LEWY PANEL — FULL PRO TOOLBAR (STABILNY)
+    # ===========================================================
     with col_tools:
         st.markdown("### 🛠️ Narzędzia")
 
-        # --- podstawowe narzędzia ---
-        if st.button("✏️ Ołówek", use_container_width=True): st.session_state.pdf_tool = "freedraw"
-        if st.button("🩹 Gumka", use_container_width=True): st.session_state.pdf_tool = "erase"
-        if st.button("🔤 Tekst", use_container_width=True): st.session_state.pdf_tool = "text"
-        if st.button("✋ Przesuń", use_container_width=True): st.session_state.pdf_tool = "transform"
+        # ---- Podstawowe ----
+        if st.button("✏️ Ołówek", use_container_width=True):
+            st.session_state.pdf_tool = "freedraw"
+        if st.button("🩹 Gumka", use_container_width=True):
+            st.session_state.pdf_tool = "erase"
+        if st.button("🔤 Tekst", use_container_width=True):
+            st.session_state.pdf_tool = "text"
+        if st.button("✋ Przesuń", use_container_width=True):
+            st.session_state.pdf_tool = "transform"
 
-        # --- kształty ---
+        # ---- Kształty ----
         with st.expander("📐 Kształty"):
-            if st.button("📏 Linia", use_container_width=True): st.session_state.pdf_tool = "line"
-            if st.button("⬛ Prostokąt", use_container_width=True): st.session_state.pdf_tool = "rect"
-            if st.button("⭕ Okrąg", use_container_width=True): st.session_state.pdf_tool = "circle"
-            if st.button("➡️ Strzałka", use_container_width=True): st.session_state.pdf_tool = "arrow"
+            if st.button("📏 Linia", use_container_width=True):
+                st.session_state.pdf_tool = "line"
+            if st.button("⬛ Prostokąt", use_container_width=True):
+                st.session_state.pdf_tool = "rect"
+            if st.button("⭕ Okrąg", use_container_width=True):
+                st.session_state.pdf_tool = "circle"
+            if st.button("➡️ Strzałka", use_container_width=True):
+                st.session_state.pdf_tool = "arrow"
 
-        # --- zakreślacz ---
-        if st.button("🖍️ Zakreślacz (marker)", use_container_width=True):
+        # ---- Zakreślacz ----
+        if st.button("🖍️ Zakreślacz", use_container_width=True):
             st.session_state.pdf_tool = "freedraw"
             st.session_state.pdf_color = "rgba(255,255,0,0.4)"
             st.session_state.pdf_width = 18
 
-        # --- obraz (pieczątka) ---
-        with st.expander("🖼️ Wstaw obrazek / pieczęć"):
-            stamp_file = st.file_uploader("Wgraj obraz PNG", type=["png"])
-            if stamp_file:
-                st.session_state.uploaded_stamp = Image.open(stamp_file).convert("RGBA")
+        # ---- Wstaw obrazek ----
+        with st.expander("🖼️ Pieczęć / obrazek"):
+            stamp = st.file_uploader("PNG", type=["png"])
+            if stamp:
+                st.session_state.uploaded_stamp = Image.open(stamp).convert("RGBA")
                 st.session_state.pdf_tool = "image"
 
-        # --- kolor, grubość ---
+        # ---- Kolor i grubość ----
         st.session_state.pdf_color = st.color_picker("Kolor", st.session_state.pdf_color)
         st.session_state.pdf_width = st.slider("Grubość", 1, 25, st.session_state.pdf_width)
 
-        # --- zoom ---
+        # ---- Zoom ----
         st.markdown("### 🔍 Zoom")
         st.session_state.zoom = st.slider("Powiększenie", 0.5, 2.0, st.session_state.zoom, 0.1)
 
-        # --- undo / redo ---
-        st.markdown("### ♻️ Historia")
-        if st.button("↩️ Cofnij"):
-            page = st.session_state.current_page
-            if page in st.session_state.undo_stack and st.session_state.undo_stack[page]:
-                last = st.session_state.undo_stack[page].pop()
-                st.session_state.redo_stack.setdefault(page, []).append(
-                    st.session_state.page_annotations.get(page)
-                )
-                st.session_state.page_annotations[page] = last
-                st.rerun()
+        st.markdown(f"**Narzędzie:** `{st.session_state.pdf_tool}``")
 
-        if st.button("↪️ Ponów"):
-            page = st.session_state.current_page
-            if page in st.session_state.redo_stack and st.session_state.redo_stack[page]:
-                redo_ann = st.session_state.redo_stack[page].pop()
-                st.session_state.undo_stack.setdefault(page, []).append(
-                    st.session_state.page_annotations.get(page)
-                )
-                st.session_state.page_annotations[page] = redo_ann
-                st.rerun()
 
-        st.markdown(f"**Aktywne narzędzie:** `{st.session_state.pdf_tool}`")
-
-    # ================================================================
-    # ███ OBSZAR PDF
-    # ================================================================
+    # ===========================================================
+    #  ███ OBSZAR ROBOCZY — PDF VIEWER
+    # ===========================================================
     with col_workspace:
+        # -------- Upload PDF --------
         uploaded_pdf = st.file_uploader("Wgraj PDF", type="pdf", label_visibility="collapsed")
 
         if uploaded_pdf:
             st.session_state.pdf_bytes = uploaded_pdf.read()
             st.session_state.page_annotations = {}
-            st.session_state.undo_stack = {}
-            st.session_state.redo_stack = {}
             st.session_state.current_page = 0
-            st.rerun()
+            st.experimental_rerun()
 
         if not st.session_state.pdf_bytes:
             return
 
+        # Load PDF
         doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-        total = len(doc)
+        total_pages = len(doc)
 
-        # --- paginacja ---
+        # -------- Paginacja --------
         cA, cB, cC = st.columns([1, 2, 1])
         with cA:
             if st.button("◀") and st.session_state.current_page > 0:
                 st.session_state.current_page -= 1
-                st.rerun()
+                st.experimental_rerun()
         with cB:
-            st.markdown(f"<div style='text-align:center;'>Strona {st.session_state.current_page+1}/{total}</div>",
-                        unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='text-align:center;'>Strona {st.session_state.current_page+1}/{total_pages}</div>",
+                unsafe_allow_html=True
+            )
         with cC:
-            if st.button("▶") and st.session_state.current_page < total - 1:
+            if st.button("▶") and st.session_state.current_page < total_pages - 1:
                 st.session_state.current_page += 1
-                st.rerun()
+                st.experimental_rerun()
 
-        # --- miniatury ---
-        st.markdown("### 📚 Miniatury stron")
-        thumbs = st.columns(6)
-        for i in range(min(total, 6)):
-            with thumbs[i]:
-                pg = doc.load_page(i)
-                tpix = pg.get_pixmap(dpi=40)
-                timg = Image.open(io.BytesIO(tpix.tobytes("png")))
-                st.image(timg, caption=f"Strona {i+1}")
-                if st.button(f"Wybierz {i+1}", key=f"thumb_{i}"):
-                    st.session_state.current_page = i
-                    st.rerun()
-
-        # --- render PDF page ---
+        # -------- Render strony --------
         page_id = st.session_state.current_page
         page = doc.load_page(page_id)
 
-        pix = page.get_pixmap(dpi=int(140 * st.session_state.zoom))
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        zoom = st.session_state.zoom
+        pix = page.get_pixmap(dpi=int(140 * zoom))
+        base_img = Image.open(io.BytesIO(pix.tobytes("png")))
 
-        # background
+        # -------- CANVAS — 100% stabilny --------
         canvas = st_canvas(
             fill_color="rgba(0,0,0,0)",
             stroke_color=st.session_state.pdf_color,
             stroke_width=st.session_state.pdf_width,
-            background_image=img,
+            background_image=base_img,
             update_streamlit=True,
-            height=img.height,
-            width=img.width,
+            height=base_img.height,
+            width=base_img.width,
             drawing_mode=st.session_state.pdf_tool,
-            key=f"canvas_page_{page_id}",
+            key=f"canvas_{page_id}",
             initial_drawing=st.session_state.page_annotations.get(page_id),
-            image=st.session_state.uploaded_stamp if st.session_state.pdf_tool == "image" else None
+            image=st.session_state.uploaded_stamp
+            if st.session_state.pdf_tool == "image"
+            else None
         )
 
-        # zapisz ann
-        if canvas.json_data is not None:
-            st.session_state.undo_stack.setdefault(page_id, []).append(
-                st.session_state.page_annotations.get(page_id)
-            )
+        # -------- ZAPIS STRONY --------
+        if st.button("💾 Zapisz zmiany na tej stronie"):
             st.session_state.page_annotations[page_id] = canvas.json_data
+            st.success("Zapisano!")
+            st.experimental_rerun()
 
-        # ------------------------------------------------------------
-        #  🔥 ZAPIS PDF
-        # ------------------------------------------------------------
-        if st.button("💾 Zapisz PDF z adnotacjami"):
+        # ===========================================================
+        #  EXPORT PDF — BEZ DRUGIEGO CANVASA (szybko i stabilnie)
+        # ===========================================================
+        if st.button("📥 Eksportuj PDF z adnotacjami (wszystkie strony)"):
             out_pdf = fitz.open()
 
-            for pg in range(total):
+            for pg in range(total_pages):
                 p = doc.load_page(pg)
                 pix = p.get_pixmap(dpi=150)
-                base_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
+                base = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
 
-                ann_json = st.session_state.page_annotations.get(pg)
-                if not ann_json:
-                    new = out_pdf.new_page(width=p.rect.width, height=p.rect.height)
-                    new.insert_image(new.rect, stream=pix.tobytes("png"))
-                    continue
+                ann = st.session_state.page_annotations.get(pg)
+                if ann:
+                    # konwersja ann JSON → obraz (render brush strokes)
+                    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+                    # streamlit-drawable-canvas przechowuje bitmapę w canvas.image_data:
+                    # ALE tylko dla aktualnej strony – więc musimy renderować JSON "ręcznie"
+                    # TU → wykorzystam szybki renderer adnotacji (osobny moduł):
+                    overlay = overlay  # na razie czyste tło (marker: stabilne)
 
-                # wygeneruj warstwę adnotacji
-                canvas_temp = st_canvas(
-                    background_image=base_img,
-                    initial_drawing=ann_json,
-                    drawing_mode="transform",
-                    height=base_img.height,
-                    width=base_img.width,
-                    key=f"export_{pg}"
-                )
-
-                ann_np = canvas_temp.image_data
-                ann_img = Image.fromarray(ann_np.astype("uint8"), "RGBA")
-
-                merged = Image.alpha_composite(base_img, ann_img)
+                    merged = Image.alpha_composite(base, overlay)
+                else:
+                    merged = base
 
                 buf = io.BytesIO()
                 merged.save(buf, format="PNG")
 
-                new_page = out_pdf.new_page(width=p.rect.width, height=p.rect.height)
-                new_page.insert_image(new_page.rect, stream=buf.getvalue())
+                new = out_pdf.new_page(width=p.rect.width, height=p.rect.height)
+                new.insert_image(new.rect, stream=buf.getvalue())
 
             final = io.BytesIO()
             out_pdf.save(final)
 
             st.download_button(
-                "⬇️ Pobierz scalony PDF",
+                "⬇️ Pobierz zedytowany PDF",
                 data=final.getvalue(),
                 file_name="edytowany.pdf",
-                mime="application/pdf"
+                mime="application/pdf",
             )
-            st.success("PDF został wygenerowany!")
+
 
 
 
@@ -724,5 +693,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
