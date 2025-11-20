@@ -7,20 +7,16 @@ from PIL import Image
 from unittest.mock import MagicMock
 
 # --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ ---
-# Ten hotfix jest potrzebny, ponieważ niektóre wewnętrzne funkcje Streamlit
-# są używane do renderowania wykresów/obrazów.
 import streamlit.elements.image as st_image
 try:
     from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
 except ImportError:
-    # Alternatywa dla starszych/innych wersji Streamlit
     try:
         from streamlit.elements.image import image_to_url as original_image_to_url
     except ImportError:
         def original_image_to_url(*args, **kwargs): return "mock_url"
 
 def patched_image_to_url(image, width, *args, **kwargs):
-    # Patch zamienia int width na mock object, który jest oczekiwany przez nowsze wersje st.image_to_url
     if isinstance(width, int):
         mock_config = MagicMock()
         mock_config.width = width
@@ -39,16 +35,15 @@ st.set_page_config(layout="wide", page_title="Chart Master")
 # --- CSS (STYLIZACJA) ---
 st.markdown("""
 <style>
-    /* Wygląd przycisków w lewym panelu */
-    div[data-testid="stVerticalBlock"] > div > button {
-        width: 100%;
-        text-align: left;
-        justify-content: flex-start;
-        border-radius: 5px;
-        margin-bottom: 2px;
-    }
     /* Ukrycie stopki */
     footer {visibility: hidden;}
+    /* Dostosowanie rozmiaru i wyglądu pól tekstowych symboli */
+    [data-testid="stTextInput"] div div input {
+        text-align: center;
+        padding: 0;
+        height: 25px; /* Mniejsze pole */
+        font-size: 16px; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,13 +66,11 @@ SPECIAL_SYMBOLS = {
 }
 
 # ==========================================
-# ZARZĄDZANIE STANEM (NAWIGACJA - Uproszczona)
+# ZARZĄDZANIE STANEM (INICJALIZACJA)
 # ==========================================
 
-# Usuwamy logikę nawigacji do PDF, zostawiamy tylko funkcje do odświeżania
-
 def go_chart():
-    # Uproszczone: po prostu odświeża stan
+    # Inicjalizacja stanu domyślnego
     if 'num_series' not in st.session_state: 
         st.session_state.num_series = 1
         st.session_state.num_points = 10
@@ -86,27 +79,23 @@ def go_chart():
         st.session_state.ref_lines = []
         default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         st.session_state.series_config = {"Y1": {'color': default_colors[0], 'alias': 'Y1'}}
-        st.session_state.symbol_to_copy = ""
     st.rerun()
 
 # ==========================================
-# MODUŁ: KREATOR WYKRESÓW (Pełna wersja)
+# MODUŁ: KREATOR WYKRESÓW
 # ==========================================
 
 def run_chart_creator():
     c_back, c_tit = st.columns([1, 10])
     with c_back:
-        # Przycisk HOME - teraz działa jako przycisk do odświeżenia/resetu stanu
-        if st.button("🔄 Reset", use_container_width=True): 
-             # Usuń klucze, aby wymusić nową inicjalizację stanu
+        if st.button("🔄 Reset", use_container_width=True, help="Wyczyść dane i przywróć ustawienia początkowe"): 
             for key in list(st.session_state.keys()):
-                if key in ['num_series', 'num_points', 'df', 'annotations', 'ref_lines', 'series_config', 'symbol_to_copy', 'chart_config', 'data_source', 'last_upload_hash']:
+                if key in ['num_series', 'num_points', 'df', 'annotations', 'ref_lines', 'series_config', 'chart_config', 'data_source', 'last_upload_hash']:
                     del st.session_state[key]
             go_chart()
     with c_tit:
         st.subheader("📊 Kreator Wykresów")
 
-    # Inicjalizacja stanu (na wypadek bezpośredniego dostępu)
     if 'num_series' not in st.session_state: go_chart() 
     
     def process_uploaded_file(uploaded_file):
@@ -116,7 +105,6 @@ def run_chart_creator():
                 df = pd.read_excel(uploaded_file)
             else:
                 uploaded_file.seek(0)
-                # Próba wczytania z różnymi separatorami
                 try: df = pd.read_csv(uploaded_file, sep=None, engine='python')
                 except: 
                     uploaded_file.seek(0)
@@ -126,18 +114,16 @@ def run_chart_creator():
             df.columns = [str(c) for c in df.columns]
             df = df.replace(r'^\s*$', np.nan, regex=True).dropna(how='all')
             if df.shape[1] < 2: return None
-            if df.shape[1] > 11: df = df.iloc[:, :11] # Max 10 serii Y + 1 X
+            if df.shape[1] > 11: df = df.iloc[:, :11]
 
             new_cols = {}
             for i, col in enumerate(df.columns):
                 if i == 0: new_col_name = 'X'
                 else: new_col_name = f'Y{i}'
-                # Konwersja na float i zastąpienie błędnych wartości zerem
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
                 new_cols[col] = new_col_name
             
             df = df.rename(columns=new_cols)
-            # Usuń wiersze, gdzie wszystkie kolumny Y są zerowe
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
         except Exception: 
@@ -153,7 +139,6 @@ def run_chart_creator():
         fig, ax = plt.subplots(figsize=(10, 6), facecolor=bg_color)
         ax.set_facecolor(bg_color)
         
-        # Obsługa osi w punkcie (0,0)
         if config['origin_at_zero']:
             ax.spines['left'].set_position('zero')
             ax.spines['bottom'].set_position('zero')
@@ -178,13 +163,11 @@ def run_chart_creator():
             alias = cfg['alias']
             
             if export_mode == 'print_bw':
-                # W trybie B/W używamy tylko czarnego koloru i różnych stylów linii
                 color, linestyle = 'black', ['-', '--', ':', '-.'][i % 4]
             else:
                 color, linestyle = cfg['color'], LINE_STYLE_MAP.get(config['line_style'], '-')
 
             if config['type'] == "Liniowy":
-                # Specjalna obsługa dla pojedynczego punktu
                 if len(df) <= 1: 
                     ax.plot(df[x_col], df[col], label=alias, color=color, linestyle='None', linewidth=config['width'], marker='o')
                 else: 
@@ -231,17 +214,12 @@ def run_chart_creator():
     def get_image_download_link(fig, format, mode, label, file_prefix):
         """Generuje przycisk pobierania dla wykresu."""
         buf = io.BytesIO()
-        # Musimy ponownie wygenerować fig_export, aby zastosować styl eksportu (B/W, Kolor)
         fig_export = create_chart_figure(st.session_state.df_chart, st.session_state.x_col, st.session_state.y_cols, st.session_state.chart_config, export_mode=mode)
         fig_export.savefig(buf, format=format, dpi=300)
         plt.close(fig_export) 
         buf.seek(0)
         return st.download_button(label=label, data=buf, file_name=f"{file_prefix}_{mode}.{format}" if mode else f"{file_prefix}.{format}", mime=f"image/{format}")
 
-    def set_symbol_to_copy(symbol):
-        """Aktualizuje stan do skopiowania symbolu."""
-        st.session_state.symbol_to_copy = symbol
-        st.toast(f"Wybrano: {symbol}", icon='📋')
 
     with st.sidebar:
         st.header("1. Źródło Danych")
@@ -253,12 +231,10 @@ def run_chart_creator():
             if data_source == "Wgraj Plik":
                 uploaded_file = st.file_uploader("Excel, CSV, TXT", type=['csv', 'txt', 'xlsx', 'xls'])
                 if uploaded_file:
-                    # Sprawdzenie, czy to ten sam plik, aby uniknąć zbędnego rerunu
                     if 'last_upload_hash' not in st.session_state or st.session_state.last_upload_hash != uploaded_file.file_id:
                         df_new = process_uploaded_file(uploaded_file)
                         if df_new is not None: 
                             st.session_state.df = df_new
-                            # Reset stanu
                             st.session_state.annotations = []
                             st.session_state.ref_lines = []
                             st.session_state.series_config = {}
@@ -272,7 +248,6 @@ def run_chart_creator():
             st.subheader("Rozmiar")
             if is_manual_mode:
                 c1, c2 = st.columns(2)
-                # Upewnienie się, że index jest poprawny
                 num_series_index = max(0, min(st.session_state.num_series - 1, 9))
                 num_series_input = c1.selectbox("Serii (Y)", list(range(1, 11)), index=num_series_index, key='sel_num_series')
                 
@@ -288,21 +263,16 @@ def run_chart_creator():
                     old_df = st.session_state.df
                     new_df = pd.DataFrame(index=range(st.session_state.num_points))
                     
-                    # Dostosowanie rozmiaru i kolumn
                     for col in current_cols:
-                        # Wczytaj istniejące dane lub utwórz nowe zerowe
                         series_data = old_df[col].astype(float) if col in old_df.columns else pd.Series(np.zeros(len(old_df))).astype(float)
                         
                         if len(series_data) < st.session_state.num_points:
-                             # Powiększenie, dodanie zer
                              new_data = pd.concat([series_data, pd.Series(np.zeros(st.session_state.num_points - len(series_data))).astype(float)], ignore_index=True)
                         else: 
-                            # Przycięcie
                             new_data = series_data.head(st.session_state.num_points)
                             
                         new_df[col] = new_data.fillna(0).astype(float)
                         
-                    # Upewnij się, że kolumna X nie jest pusta (użyj indeksu jeśli jest)
                     if (new_df['X'] == 0).all(): new_df['X'] = np.arange(1, st.session_state.num_points + 1).astype(float)
                     
                     st.session_state.df = new_df
@@ -334,7 +304,6 @@ def run_chart_creator():
             st.subheader("Skala i Styl")
             c1, c2 = st.columns(2)
             line_style = c1.selectbox("Linia", REF_LINE_STYLES, key='sel_l_style')
-            # Upewnienie się, że index jest poprawny
             try: line_width_index = WIDTH_OPTIONS.index(st.session_state.get('chart_config', {}).get('width', 2.0))
             except ValueError: line_width_index = 1
             line_width = c2.selectbox("Grubość", WIDTH_OPTIONS, index=line_width_index, key='sel_l_width')
@@ -344,14 +313,28 @@ def run_chart_creator():
             show_markers = st.checkbox("Markery (tylko liniowy)", False, key='sel_markers')
             show_grid = st.checkbox("Siatka", True, key='sel_grid')
 
+        # --- PANEL SYMBOLI (Zmodyfikowany) ---
         with st.expander("✨ Symbole (Kopiuj)"):
-            st.markdown("Zaznacz i skopiuj:")
-            st.text_area("Symbol:", st.session_state.symbol_to_copy, key="copy_area", height=35)
+            st.markdown("Skopiuj symbol **zaznaczając** go w poniższych polach:")
+            
+            # Iteracja po kategoriach symboli
             for cat, syms in SPECIAL_SYMBOLS.items():
                 st.caption(f"**{cat}**")
-                cols = st.columns(6) 
+                
+                cols_count = 6
+                cols = st.columns(cols_count)
+                
+                # Iteracja po symbolach w danej kategorii
                 for i, s in enumerate(syms):
-                    cols[i%6].button(s, key=f"s_{cat}_{s}", on_click=set_symbol_to_copy, args=(s,))
+                    # Używamy st.text_input. Value jest symbolem, a disabled=True zapobiega edycji.
+                    cols[i % cols_count].text_input(
+                        label=f"Sym {i}", 
+                        value=s, 
+                        key=f"copy_sym_{cat}_{i}", 
+                        disabled=True, # Blokada edycji
+                        label_visibility="collapsed" # Ukrycie etykiety
+                    )
+        # --- KONIEC PANELU SYMBOLI ---
 
     # Zapis konfiguracji do stanu sesji
     chart_config = {'type': chart_type, 'line_style': line_style, 'width': line_width, 'markers': show_markers, 'log_x': log_x, 'log_y': log_y, 'grid': show_grid, 'xlim': (xm, xM), 'ylim': (ym, yM), 'title': "", 'x_label': x_label, 'y_label': y_label, 'origin_at_zero': origin_at_zero}
@@ -388,7 +371,6 @@ def run_chart_creator():
         with st.expander("🎨 Serie", expanded=True):
             default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
             
-            # Wyczyść konfigurację dla usuniętych serii
             st.session_state.series_config = {k:v for k,v in st.session_state.series_config.items() if k in y_cols}
             
             for i, col in enumerate(y_cols):
@@ -404,7 +386,6 @@ def run_chart_creator():
 
         # --- ADNOTACJE ---
         with st.expander("📝 Adnotacje", expanded=True):
-            # Ustalenie domyślnych wartości na średniej
             def_x = float(st.session_state.df_chart[x_col].mean()) if not st.session_state.df_chart.empty else 0.0
             def_y = float(st.session_state.df_chart[y_cols[0]].mean()) if not st.session_state.df_chart.empty and len(y_cols)>0 else 0.0
             
@@ -429,7 +410,6 @@ def run_chart_creator():
                         cd, cx, cy = st.columns([0.5, 1.5, 1.5])
                         if cd.button("❌", key=f"rmn_{i}"): rerun = True; continue
                         
-                        # Edytowalne pola adnotacji
                         nx_val = cx.number_input("X", value=n['x'], key=f"nx_{i}", format="%f", label_visibility="collapsed")
                         ny_val = cy.number_input("Y", value=n['y'], key=f"ny_{i}", format="%f", label_visibility="collapsed")
                         nt_val = st.text_input("Treść", value=n['text'], key=f"nt_{i}")
@@ -489,7 +469,6 @@ def run_chart_creator():
         chart_title = st.text_input("Tytuł Wykresu", st.session_state.chart_config.get('title', "Mój Wykres"), key='title_input', placeholder="Tytuł")
         st.session_state.chart_config['title'] = chart_title
         
-        # Generowanie wykresu do podglądu
         fig_screen = create_chart_figure(st.session_state.df_chart, x_col, y_cols, st.session_state.chart_config, export_mode=None)
         st.pyplot(fig_screen)
         
@@ -516,7 +495,6 @@ def run_chart_creator():
 # ==========================================
 
 def main():
-    # Uruchamiamy Kreator Wykresów bezpośrednio
     run_chart_creator()
 
 if __name__ == "__main__":
