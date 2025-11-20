@@ -3,6 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import io
+from pypdf import PdfReader, PdfWriter, transformation
+from pypdf.generic import NameObject, TextString
+from reportlab.pdfgen import canvas as reportlab_canvas
+from reportlab.lib.pagesizes import letter
 from PIL import Image
 from unittest.mock import MagicMock
 
@@ -608,4 +612,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
