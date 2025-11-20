@@ -5,7 +5,17 @@ import numpy as np
 import io
 from PIL import Image
 
-# Importy do PDF
+# --- HOTFIX DLA BŁĘDU "image_to_url" ---
+# Ten fragment naprawia błąd kompatybilności Streamlit > 1.34 z biblioteką canvas
+import streamlit.elements.image as st_image
+try:
+    from streamlit.elements.lib.image_utils import image_to_url
+    if not hasattr(st_image, 'image_to_url'):
+        st_image.image_to_url = image_to_url
+except ImportError:
+    pass # Starsze wersje Streamlit mogą tego nie potrzebować
+
+# Importy bibliotek zewnętrznych
 try:
     import fitz  # PyMuPDF
     from streamlit_drawable_canvas import st_canvas
@@ -13,8 +23,23 @@ except ImportError:
     st.error("Brakuje bibliotek! Upewnij się, że w requirements.txt są: pymupdf, streamlit-drawable-canvas, Pillow")
     st.stop()
 
-# --- KONFIGURACJA STRONY (Musi być pierwsza) ---
+# --- 1. KONFIGURACJA I STAŁE ---
 st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
+
+# CSS dla wyglądu przycisków w pasku narzędzi
+st.markdown("""
+<style>
+    /* Stylizacja przycisków w lewej kolumnie PDF */
+    div[data-testid="stVerticalBlock"] > div > button {
+        width: 100%;
+        text-align: left;
+        border-radius: 5px;
+        margin-bottom: 5px;
+    }
+    /* Ukrycie stopki */
+    footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
 # --- STAŁE GLOBALNE ---
 REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-Kropka (-.)"]
@@ -34,30 +59,12 @@ SPECIAL_SYMBOLS = {
     "Matematyczne": ["×", "÷", "∞", "∑", "∫", "%", "±", "≠"]
 }
 
-# --- CSS DLA WYGLĄDU MENU (Ciemny motyw + Duże przyciski) ---
-st.markdown("""
-<style>
-    div.stButton > button:first-child {
-        height: 3em;
-        width: 100%; 
-    }
-    .big-font {
-        font-size:30px !important;
-        font-weight: bold;
-    }
-    /* Ukrycie domyślnego menu hamburgera i stopki Streamlit dla czystszego wyglądu */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
-
-
 # ==========================================
 # ZARZĄDZANIE STANEM APLIKACJI
 # ==========================================
 
 if 'current_view' not in st.session_state:
-    st.session_state.current_view = "home" # home, chart_creator, pdf_editor
+    st.session_state.current_view = "home"
 
 def go_home():
     st.session_state.current_view = "home"
@@ -78,11 +85,11 @@ def go_pdf():
 
 def run_chart_creator():
     # Pasek nawigacji
-    col_nav, col_title = st.columns([1, 10])
-    with col_nav:
-        if st.button("🏠 Menu"): go_home()
-    with col_title:
-        st.title("📊 Kreator Wykresów")
+    c_back, c_tit = st.columns([1, 10])
+    with c_back:
+        if st.button("🏠 Menu", use_container_width=True): go_home()
+    with c_tit:
+        st.subheader("📊 Kreator Wykresów")
 
     # --- INICJALIZACJA STANU WYKRESÓW ---
     if 'num_series' not in st.session_state: st.session_state.num_series = 1
@@ -119,7 +126,7 @@ def run_chart_creator():
                 new_cols[col] = new_col_name
             
             df = df.rename(columns=new_cols)
-            # POPRAWKA REGEX (użycie raw string r'')
+            # POPRAWKA REGEX
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
         except Exception: return None
@@ -208,6 +215,7 @@ def run_chart_creator():
         st.toast(f"Wybrano: {symbol}", icon='📋')
 
     # --- UI KREATORA ---
+    
     with st.sidebar:
         st.header("1. Źródło Danych")
         is_manual_mode = (st.session_state.get('data_source', "Wpisz Ręcznie") == "Wpisz Ręcznie")
@@ -393,7 +401,7 @@ def run_chart_creator():
                         c1, c2, c3 = st.columns([1.5, 1.5, 1])
                         nc = c1.color_picker("Kol", l['color'], key=f"lc_{i}", label_visibility="collapsed")
                         ns = c2.selectbox("Styl", REF_LINE_STYLES, index=REF_LINE_STYLES.index(l.get('style', DEFAULT_REF_LINE_STYLE)) if l.get('style') in REF_LINE_STYLES else 0, key=f"ls_{i}", label_visibility="collapsed")
-                        nw = c3.selectbox("W", WIDTH_OPTIONS, index=WIDTH_OPTIONS.index(l.get('width', 1.0)) if l.get('width') in WIDTH_OPTIONS else 0, key=f"lw_{i}", label_visibility="collapsed")
+                        nw = c3.selectbox("Gr", WIDTH_OPTIONS, index=WIDTH_OPTIONS.index(l.get('width', 1.0)) if l.get('width') in WIDTH_OPTIONS else 0, key=f"lw_{i}", label_visibility="collapsed")
                     lines_keep.append({'axis': na, 'value': nv, 'color': nc, 'style': ns, 'width': nw})
                 if rerun or len(lines_keep) != len(st.session_state.ref_lines):
                     st.session_state.ref_lines = lines_keep
@@ -423,18 +431,17 @@ def run_chart_creator():
             get_image_download_link(fig_screen, "png", "print_bw", "PNG", fp)
             get_image_download_link(fig_screen, "pdf", "print_bw", "PDF", fp)
 
-
 # ==========================================
 # MODUŁ 2: EDYTOR PDF (Adnotacje)
 # ==========================================
 
 def run_pdf_editor():
-    # Pasek nawigacji
-    col_nav, col_title = st.columns([1, 10])
-    with col_nav:
-        if st.button("🏠 Menu"): go_home()
-    with col_title:
-        st.title("📄 Edytor PDF")
+    # Nawigacja powrotna
+    c_back, c_tit = st.columns([1, 10])
+    with c_back:
+        if st.button("🏠 Menu", use_container_width=True): go_home()
+    with c_tit:
+        st.subheader("📄 Edytor PDF")
 
     # --- STAN PDF ---
     if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
@@ -443,130 +450,117 @@ def run_pdf_editor():
     if 'pdf_color' not in st.session_state: st.session_state.pdf_color = "#FF0000"
     if 'pdf_width' not in st.session_state: st.session_state.pdf_width = 2
 
-    # --- PASEK NARZĘDZI (LEWY) ---
-    with st.sidebar:
-        st.header("Narzędzia")
+    # --- UKŁAD KOLUMN (Pasek narzędzi | Obszar roboczy) ---
+    col_tools, col_workspace = st.columns([1, 6])
+
+    # LEWY PASEK NARZĘDZI
+    with col_tools:
+        st.markdown("### Narzędzia")
         
-        # Przyciski narzędzi
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            if st.button("🖊️ Ołówek"): st.session_state.pdf_tool = "freedraw"
-            if st.button("📏 Linia"): st.session_state.pdf_tool = "line"
-            if st.button("⬜ Prostokąt"): st.session_state.pdf_tool = "rect"
-        with col_t2:
-            if st.button("🟡 Koło"): st.session_state.pdf_tool = "circle"
-            if st.button("🔤 Tekst"): st.session_state.pdf_tool = "text" # UWAGA: Tekst w canvas działa specyficznie
-            if st.button("✋ Przesuń"): st.session_state.pdf_tool = "transform"
+        # Przyciski narzędzi (Pionowo)
+        if st.button("🖊️ Ołówek", use_container_width=True): st.session_state.pdf_tool = "freedraw"
+        if st.button("🔤 Tekst", use_container_width=True): st.session_state.pdf_tool = "text"
+        if st.button("✋ Przesuń", use_container_width=True): st.session_state.pdf_tool = "transform"
+        
+        with st.expander("Kształty"):
+            if st.button("📏 Linia", use_container_width=True): st.session_state.pdf_tool = "line"
+            if st.button("⬜ Prostokąt", use_container_width=True): st.session_state.pdf_tool = "rect"
+            if st.button("🟡 Koło", use_container_width=True): st.session_state.pdf_tool = "circle"
 
         st.markdown("---")
-        st.caption(f"Aktywne: **{st.session_state.pdf_tool.upper()}**")
+        st.markdown(f"**Aktywne: {st.session_state.pdf_tool.upper()}**")
         
-        # Opcje narzędzia
+        # Konfiguracja narzędzia
         st.session_state.pdf_color = st.color_picker("Kolor", st.session_state.pdf_color)
-        st.session_state.pdf_width = st.slider("Grubość", 1, 20, st.session_state.pdf_width)
+        st.session_state.pdf_width = st.selectbox("Grubość", [1, 3, 5, 10, 15], index=1)
         
+        text_val = ""
         if st.session_state.pdf_tool == "text":
-            text_val = st.text_input("Treść tekstu", "Tekst")
-        else:
-            text_val = ""
+            text_val = st.text_input("Wpisz tekst:", "Twój tekst")
+            st.info("Kliknij na PDF, aby wstawić.")
 
-    # --- GŁÓWNY OBSZAR PDF ---
-    uploaded_pdf = st.file_uploader("Wgraj PDF", type="pdf", key="pdf_up")
-    
-    if uploaded_pdf:
-        if 'last_pdf' not in st.session_state or st.session_state.last_pdf != uploaded_pdf.name:
-            st.session_state.pdf_bytes = uploaded_pdf.read()
-            st.session_state.last_pdf = uploaded_pdf.name
-            st.session_state.page_annotations = {}
-            st.session_state.current_page = 0
-            st.rerun()
-
-    if st.session_state.pdf_bytes:
-        doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-        total_pages = len(doc)
-
-        # Nawigacja
-        c1, c2, c3 = st.columns([1, 5, 1])
-        with c1:
-            if st.button("Poprzednia") and st.session_state.current_page > 0:
-                st.session_state.current_page -= 1
-                st.rerun()
-        with c2:
-            st.markdown(f"<h4 style='text-align: center'>Strona {st.session_state.current_page + 1} / {total_pages}</h4>", unsafe_allow_html=True)
-        with c3:
-            if st.button("Następna") and st.session_state.current_page < total_pages - 1:
-                st.session_state.current_page += 1
-                st.rerun()
-
-        # Renderowanie
-        page_num = st.session_state.current_page
-        page = doc.load_page(page_num)
-        pix = page.get_pixmap(dpi=120) # DPI 120 dla wydajności
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
-
-        # Stan rysunku dla tej strony
-        initial_drawing = st.session_state.page_annotations.get(page_num)
-
-        # Płótno (Canvas)
-        # POPRAWKA: usunięto text_value, dodano fill_color dla kształtów
-        fill_color = "#00000000" # Przezroczysty
+    # PRAWY OBSZAR ROBOCZY
+    with col_workspace:
+        uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
         
-        canvas_result = st_canvas(
-            fill_color=fill_color,
-            stroke_width=st.session_state.pdf_width,
-            stroke_color=st.session_state.pdf_color,
-            background_image=img,
-            update_streamlit=True,
-            height=img.height,
-            width=img.width,
-            drawing_mode=st.session_state.pdf_tool,
-            initial_drawing=initial_drawing,
-            key=f"canvas_{page_num}",
-        )
+        if uploaded_pdf:
+            if 'last_pdf' not in st.session_state or st.session_state.last_pdf != uploaded_pdf.name:
+                st.session_state.pdf_bytes = uploaded_pdf.read()
+                st.session_state.last_pdf = uploaded_pdf.name
+                st.session_state.page_annotations = {}
+                st.session_state.current_page = 0
+                st.rerun()
 
-        # Zapis stanu
-        if canvas_result.json_data is not None:
-            st.session_state.page_annotations[page_num] = canvas_result.json_data
+        if st.session_state.pdf_bytes:
+            doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
+            total_pages = len(doc)
 
-        # Eksport
-        st.markdown("---")
-        if st.button("💾 Pobierz PDF z Edycjami"):
-            out_buf = io.BytesIO()
-            for p_idx in range(len(doc)):
-                if p_idx in st.session_state.page_annotations:
-                    # Tutaj uproszczona logika: zapisujemy jako obrazek
-                    # Ponieważ st_canvas zwraca dane tylko aktywnego,
-                    # Pełny zapis wymagałby parsowania JSON.
-                    # Dla demo: zapisujemy tylko jeśli jesteśmy na stronie lub mamy cache.
-                    pass 
+            # Paginacja i Obrót
+            c_prev, c_info, c_next, c_rot = st.columns([1, 2, 1, 1])
+            with c_prev:
+                if st.button("◀") and st.session_state.current_page > 0:
+                    st.session_state.current_page -= 1
+                    st.rerun()
+            with c_info:
+                st.markdown(f"<div style='text-align: center; margin-top: 5px;'>Strona {st.session_state.current_page + 1} / {total_pages}</div>", unsafe_allow_html=True)
+            with c_next:
+                if st.button("▶") and st.session_state.current_page < total_pages - 1:
+                    st.session_state.current_page += 1
+                    st.rerun()
             
-            # Zapisujemy aktualny dokument (bez zmian, bo to wersja demo)
-            # W pełnej wersji trzeba by przetworzyć JSON na PyMuPDF draw commands
-            doc.save(out_buf)
-            st.download_button("Pobierz", out_buf.getvalue(), "edytowany.pdf", "application/pdf")
-            st.info("W wersji przeglądarkowej edycja działa wizualnie. Pełne scalanie wymaga backendu.")
+            # Renderowanie
+            page_num = st.session_state.current_page
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(dpi=120)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
 
+            # Canvas
+            fill_color = "#00000000" 
+            initial_drawing = st.session_state.page_annotations.get(page_num)
+
+            canvas_result = st_canvas(
+                fill_color=fill_color,
+                stroke_width=st.session_state.pdf_width,
+                stroke_color=st.session_state.pdf_color,
+                background_image=img,
+                update_streamlit=True,
+                height=img.height,
+                width=img.width,
+                drawing_mode=st.session_state.pdf_tool,
+                initial_drawing=initial_drawing,
+                key=f"canvas_{page_num}",
+            )
+
+            if canvas_result.json_data is not None:
+                st.session_state.page_annotations[page_num] = canvas_result.json_data
+
+            # Zapis
+            st.markdown("---")
+            if st.button("💾 Zapisz i Pobierz PDF"):
+                out_buf = io.BytesIO()
+                # Uproszczony zapis (dla demo)
+                doc.save(out_buf)
+                st.download_button("Pobierz PDF", out_buf.getvalue(), "edytowany.pdf", "application/pdf")
+                st.warning("W wersji webowej edycje są wizualne (canvas). Pełne scalanie wymaga backendu.")
 
 # ==========================================
 # EKRAN STARTOWY (MENU)
 # ==========================================
 
 def home_screen():
+    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
     st.markdown("<h1 style='text-align: center; margin-bottom: 50px;'>Wybierz Narzędzie</h1>", unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns([1, 2, 1])
     
     with c2:
-        st.markdown("---")
         if st.button("📊 KREATOR WYKRESÓW", use_container_width=True):
             go_chart()
         
-        st.write("") # Odstęp
-        st.write("") # Odstęp
+        st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
         if st.button("📄 EDYTOR PDF", use_container_width=True):
             go_pdf()
-        st.markdown("---")
 
 # ==========================================
 # GŁÓWNY ROUTER
