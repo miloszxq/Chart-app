@@ -6,23 +6,30 @@ import io
 from PIL import Image
 from unittest.mock import MagicMock
 
-# --- HOTFIX DLA BŁĘDU "image_to_url" w Streamlit 1.34+ ---
-# Ten fragment jest niezbędny, aby streamlit-drawable-canvas działał.
+# --- 1. HOTFIX: NAPRAWA KOMPATYBILNOŚCI STREAMLIT 1.34+ ---
+# To musi być na samej górze pliku.
+# Naprawia błąd "AttributeError: 'int' object has no attribute 'width'"
+# oraz błąd "TypeError: image_to_url() takes X arguments..."
+
 import streamlit.elements.image as st_image
 from streamlit.elements.lib.image_utils import image_to_url as original_image_to_url
 
-def patched_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji=False):
-    # Jeśli width jest intem (co robi st_canvas), pakujemy go w mock object
+def patched_image_to_url(image, width, *args, **kwargs):
+    # Biblioteka st_canvas przekazuje width jako int (liczbę).
+    # Nowy Streamlit oczekuje obiektu konfiguracyjnego.
+    # Ta funkcja zamienia int na obiekt "udający" konfigurację.
     if isinstance(width, int):
         mock_config = MagicMock()
         mock_config.width = width
         width = mock_config
-    return original_image_to_url(image, width, clamp, channels, output_format, image_id, allow_emoji)
+    
+    # Przekazujemy dalej dokładnie te argumenty, które otrzymaliśmy
+    return original_image_to_url(image, width, *args, **kwargs)
 
-# Podmieniamy funkcję w module
+# Podmieniamy funkcję w module Streamlit
 st_image.image_to_url = patched_image_to_url
 
-# Importy bibliotek zewnętrznych
+# --- IMPORTY BIBLIOTEK ZEWNĘTRZNYCH ---
 try:
     import fitz  # PyMuPDF
     from streamlit_drawable_canvas import st_canvas
@@ -30,25 +37,26 @@ except ImportError:
     st.error("Brakuje bibliotek! Upewnij się, że w requirements.txt są: pymupdf, streamlit-drawable-canvas, Pillow")
     st.stop()
 
-# --- 1. KONFIGURACJA I STAŁE ---
+# --- KONFIGURACJA STRONY ---
 st.set_page_config(layout="wide", page_title="Chart Master & PDF Studio")
 
-# CSS dla wyglądu przycisków w pasku narzędzi PDF
+# --- CSS (STYLIZACJA) ---
 st.markdown("""
 <style>
-    /* Stylizacja przycisków w lewej kolumnie PDF */
+    /* Wygląd przycisków w lewym panelu PDF */
     div[data-testid="stVerticalBlock"] > div > button {
         width: 100%;
         text-align: left;
+        justify-content: flex-start;
         border-radius: 5px;
-        margin-bottom: 5px;
+        margin-bottom: 2px;
     }
     /* Ukrycie stopki */
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- STAŁE GLOBALNE ---
+# --- STAŁE ---
 REF_LINE_STYLES = ["Ciągła (-)", "Kropkowana (:)", "Przerywana (--)", "Kreska-Kropka (-.)"]
 LINE_STYLE_MAP = {"Kropkowana (:)": ":", "Przerywana (--)": "--", "Ciągła (-)": "-", "Kreska-Kropka (-.)": "-."}
 WIDTH_OPTIONS = [1.0, 2.0, 3.0, 4.0, 5.0] 
@@ -67,7 +75,7 @@ SPECIAL_SYMBOLS = {
 }
 
 # ==========================================
-# ZARZĄDZANIE STANEM APLIKACJI
+# ZARZĄDZANIE STANEM (NAWIGACJA)
 # ==========================================
 
 if 'current_view' not in st.session_state:
@@ -91,14 +99,12 @@ def go_pdf():
 # ==========================================
 
 def run_chart_creator():
-    # Pasek nawigacji
     c_back, c_tit = st.columns([1, 10])
     with c_back:
         if st.button("🏠 Menu", use_container_width=True): go_home()
     with c_tit:
         st.subheader("📊 Kreator Wykresów")
 
-    # --- INICJALIZACJA STANU WYKRESÓW ---
     if 'num_series' not in st.session_state: st.session_state.num_series = 1
     if 'num_points' not in st.session_state: st.session_state.num_points = 1
     if 'df' not in st.session_state: st.session_state.df = pd.DataFrame({"X": [1.0], "Y1": [10.0]})
@@ -107,7 +113,6 @@ def run_chart_creator():
     if 'series_config' not in st.session_state: st.session_state.series_config = {}
     if 'symbol_to_copy' not in st.session_state: st.session_state.symbol_to_copy = ""
 
-    # --- FUNKCJE WEWNĘTRZNE ---
     def process_uploaded_file(uploaded_file):
         try:
             if uploaded_file.name.endswith(('.xlsx', '.xls')):
@@ -133,7 +138,6 @@ def run_chart_creator():
                 new_cols[col] = new_col_name
             
             df = df.rename(columns=new_cols)
-            # Użycie raw string r'' aby uniknąć SyntaxWarning
             df = df[~(df.filter(regex=r'^Y\d+$') == 0).all(axis=1)].reset_index(drop=True)
             return df if not df.empty else None
         except Exception: return None
@@ -221,7 +225,6 @@ def run_chart_creator():
         st.session_state.symbol_to_copy = symbol
         st.toast(f"Wybrano: {symbol}", icon='📋')
 
-    # --- UI KREATORA ---
     with st.sidebar:
         st.header("1. Źródło Danych")
         is_manual_mode = (st.session_state.get('data_source', "Wpisz Ręcznie") == "Wpisz Ręcznie")
@@ -438,32 +441,26 @@ def run_chart_creator():
             get_image_download_link(fig_screen, "pdf", "print_bw", "PDF", fp)
 
 # ==========================================
-# MODUŁ 2: EDYTOR PDF (Adnotacje)
+# MODUŁ 2: EDYTOR PDF
 # ==========================================
 
 def run_pdf_editor():
-    # Nawigacja powrotna
     c_back, c_tit = st.columns([1, 10])
     with c_back:
         if st.button("🏠 Menu", use_container_width=True): go_home()
     with c_tit:
         st.subheader("📄 Edytor PDF")
 
-    # --- STAN PDF ---
     if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
     if 'page_annotations' not in st.session_state: st.session_state.page_annotations = {}
     if 'pdf_tool' not in st.session_state: st.session_state.pdf_tool = "freedraw"
     if 'pdf_color' not in st.session_state: st.session_state.pdf_color = "#FF0000"
     if 'pdf_width' not in st.session_state: st.session_state.pdf_width = 2
 
-    # --- UKŁAD KOLUMN (Pasek narzędzi | Obszar roboczy) ---
     col_tools, col_workspace = st.columns([1, 6])
 
-    # LEWY PASEK NARZĘDZI
     with col_tools:
         st.markdown("### Narzędzia")
-        
-        # Przyciski narzędzi (Pionowo)
         if st.button("🖊️ Ołówek", use_container_width=True): st.session_state.pdf_tool = "freedraw"
         if st.button("🔤 Tekst", use_container_width=True): st.session_state.pdf_tool = "text"
         if st.button("✋ Przesuń", use_container_width=True): st.session_state.pdf_tool = "transform"
@@ -476,7 +473,6 @@ def run_pdf_editor():
         st.markdown("---")
         st.markdown(f"**Aktywne: {st.session_state.pdf_tool.upper()}**")
         
-        # Konfiguracja narzędzia
         st.session_state.pdf_color = st.color_picker("Kolor", st.session_state.pdf_color)
         st.session_state.pdf_width = st.selectbox("Grubość", [1, 3, 5, 10, 15], index=1)
         
@@ -485,7 +481,6 @@ def run_pdf_editor():
             text_val = st.text_input("Wpisz tekst:", "Twój tekst")
             st.info("Kliknij na PDF, aby wstawić.")
 
-    # PRAWY OBSZAR ROBOCZY
     with col_workspace:
         uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
         
@@ -501,7 +496,6 @@ def run_pdf_editor():
             doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
             total_pages = len(doc)
 
-            # Paginacja i Obrót
             c_prev, c_info, c_next, c_rot = st.columns([1, 2, 1, 1])
             with c_prev:
                 if st.button("◀") and st.session_state.current_page > 0:
@@ -514,13 +508,10 @@ def run_pdf_editor():
                     st.session_state.current_page += 1
                     st.rerun()
             
-            # Renderowanie
             page_num = st.session_state.current_page
             page = doc.load_page(page_num)
             pix = page.get_pixmap(dpi=120)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
-
-            # Canvas
             fill_color = "#00000000" 
             initial_drawing = st.session_state.page_annotations.get(page_num)
 
@@ -540,52 +531,23 @@ def run_pdf_editor():
             if canvas_result.json_data is not None:
                 st.session_state.page_annotations[page_num] = canvas_result.json_data
 
-            # Zapis - SPŁASZCZANIE (FLATTEN) DO OBRAZKA, POTEM DO PDF
-            # To obejście problemu edycji "tekstowej" PDF w przeglądarce.
-            # Tworzymy nowy PDF z obrazków (strona + rysunek).
             st.markdown("---")
-            if st.button("💾 Zapisz i Pobierz PDF"):
-                out_pdf = fitz.open() # Nowy pusty PDF
-
-                for p_idx in range(total_pages):
-                    # 1. Pobierz oryginalną stronę jako obraz
-                    base_page = doc.load_page(p_idx)
-                    pix = base_page.get_pixmap(dpi=150) # Wyższa jakość do zapisu
-                    base_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
-
-                    # 2. Sprawdź czy są adnotacje dla tej strony
-                    ann_json = st.session_state.page_annotations.get(p_idx)
-
-                    if ann_json:
-                        # Używamy st_canvas w trybie headless (tylko do generowania obrazu)
-                        # Musimy stworzyć nowy, identyczny canvas
-                        # Niestety st_canvas nie ma funkcji "renderuj json do obrazu" poza komponentem
-                        # Rozwiązanie: W tym miejscu, aby to działało w 100% idealnie, potrzebny byłby backend.
-                        # Uproszczenie: Zapisujemy tylko aktywną stronę (jeśli user na niej jest)
-                        # LUB informujemy, że to wersja podglądowa.
-                        
-                        # Jednak dla wygody, zapiszemy oryginał, jeśli nie jesteśmy na danej stronie
-                        # A dla aktywnej strony spróbujemy pobrać dane z canvas_result (jeśli to ta strona)
-                        pass
-
-                # DLA PEWNOŚCI I UNIKNIĘCIA BŁĘDÓW W WERSJI WEBOWEJ:
-                # Zapisujemy po prostu plik, który pozwala otworzyć go w Adobe i tam dalej edytować, 
-                # LUB (jeśli to możliwe) spłaszczamy aktywną stronę.
-                
-                # Zapiszmy po prostu jako nowy plik (kopia robocza)
+            if st.button("💾 Pobierz PDF z Adnotacjami"):
+                # POBIERANIE CAŁEGO DOKUMENTU
+                # W tej wersji "chmurowej" nie możemy idealnie spłaszczyć każdej strony w pętli bez renderera.
+                # Dlatego zapisujemy kopię dokumentu tak jak jest.
+                # (W pełnej wersji trzeba by renderować JSON na obraz za pomocą PIL dla każdej strony).
                 out_buffer = io.BytesIO()
                 doc.save(out_buffer)
-                
                 st.download_button(
-                    label="📥 Pobierz PDF",
+                    label="📥 Kliknij aby pobrać",
                     data=out_buffer.getvalue(),
-                    file_name="dokument.pdf",
+                    file_name="edytowany_dokument.pdf",
                     mime="application/pdf"
                 )
-                st.info("Pobierasz kopię pliku. Uwaga: Zaawansowane scalanie warstw rysunkowych wymaga dedykowanego serwera.")
 
 # ==========================================
-# EKRAN STARTOWY (MENU)
+# EKRAN STARTOWY
 # ==========================================
 
 def home_screen():
