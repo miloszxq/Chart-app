@@ -452,104 +452,128 @@ def run_pdf_editor():
     with c_back:
         if st.button("🏠 Menu", use_container_width=True): go_home()
     with c_tit:
-        st.subheader("📄 Edytor PDF")
+        st.subheader("📄 Edytor PDF (Tryb Strukturalny)")
 
     if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
-    if 'page_annotations' not in st.session_state: st.session_state.page_annotations = {}
-    if 'pdf_tool' not in st.session_state: st.session_state.pdf_tool = "freedraw"
-    if 'pdf_color' not in st.session_state: st.session_state.pdf_color = "#FF0000"
-    if 'pdf_width' not in st.session_state: st.session_state.pdf_width = 2
-
-    col_tools, col_workspace = st.columns([1, 6])
+    if 'current_pdf_annotations' not in st.session_state: st.session_state.current_pdf_annotations = []
+    
+    col_tools, col_workspace = st.columns([1, 3])
 
     with col_tools:
-        st.markdown("### Narzędzia")
-        if st.button("🖊️ Ołówek", use_container_width=True): st.session_state.pdf_tool = "freedraw"
-        if st.button("🔤 Tekst", use_container_width=True): st.session_state.pdf_tool = "text"
-        if st.button("✋ Przesuń", use_container_width=True): st.session_state.pdf_tool = "transform"
+        st.markdown("### 🛠️ Narzędzia Edycji")
         
-        with st.expander("Kształty"):
-            if st.button("📏 Linia", use_container_width=True): st.session_state.pdf_tool = "line"
-            if st.button("⬜ Prostokąt", use_container_width=True): st.session_state.pdf_tool = "rect"
-            if st.button("🟡 Koło", use_container_width=True): st.session_state.pdf_tool = "circle"
+        # --- KONTROLKI DODAWANIA TEKSTU ---
+        st.caption("Dodaj Adnotację Tekstową")
+        with st.form("text_annotation_form", clear_on_submit=True):
+            text_content = st.text_input("Tekst Adnotacji", "Wpisz swój tekst tutaj.")
+            page_to_annotate = st.number_input("Strona (1-)", min_value=1, value=1)
+            pos_x = st.number_input("Pozycja X (0-500)", min_value=0, max_value=500, value=100)
+            pos_y = st.number_input("Pozycja Y (0-700)", min_value=0, max_value=700, value=700)
+            text_size = st.number_input("Rozmiar Tekstu", min_value=8, max_value=40, value=12)
+
+            if st.form_submit_button("➕ Dodaj do Listy Adnotacji"):
+                if not st.session_state.pdf_bytes:
+                    st.warning("Najpierw wczytaj plik PDF.")
+                else:
+                    st.session_state.current_pdf_annotations.append({
+                        'text': text_content,
+                        'page': int(page_to_annotate),
+                        'x': int(pos_x),
+                        'y': int(pos_y),
+                        'size': int(text_size)
+                    })
+                    st.success(f"Dodano adnotację na stronę {page_to_annotate}!")
+        
+        # --- LISTA ADNOTACJI ---
+        if st.session_state.current_pdf_annotations:
+            st.markdown("---")
+            st.subheader("Lista Adnotacji")
+            for i, ann in enumerate(st.session_state.current_pdf_annotations):
+                 st.caption(f"Strona {ann['page']}: {ann['text'][:30]}...")
 
         st.markdown("---")
-        st.markdown(f"**Aktywne: {st.session_state.pdf_tool.upper()}**")
-        
-        st.session_state.pdf_color = st.color_picker("Kolor", st.session_state.pdf_color)
-        st.session_state.pdf_width = st.selectbox("Grubość", [1, 3, 5, 10, 15], index=1)
-        
-        text_val = ""
-        if st.session_state.pdf_tool == "text":
-            text_val = st.text_input("Wpisz tekst:", "Twój tekst")
-            st.info("Kliknij na PDF, aby wstawić.")
+        if st.button("🗑️ Wyczyść Adnotacje"):
+            st.session_state.current_pdf_annotations = []
+            st.rerun()
 
     with col_workspace:
         uploaded_pdf = st.file_uploader("Wgraj plik PDF", type="pdf", label_visibility="collapsed")
         
         if uploaded_pdf:
-            if 'last_pdf' not in st.session_state or st.session_state.last_pdf != uploaded_pdf.name:
-                st.session_state.pdf_bytes = uploaded_pdf.read()
-                st.session_state.last_pdf = uploaded_pdf.name
-                st.session_state.page_annotations = {}
-                st.session_state.current_page = 0
-                st.rerun()
+            st.session_state.pdf_bytes = uploaded_pdf.read()
+            st.session_state.last_pdf = uploaded_pdf.name
+            st.session_state.current_pdf_annotations = []
+            st.success("Plik PDF wczytany. Możesz dodawać adnotacje.")
+            # Nie używamy st.rerun(), bo chcemy, aby dane były natychmiast edytowalne
 
         if st.session_state.pdf_bytes:
-            # Użycie fitz (PyMuPDF)
-            doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-            total_pages = len(doc)
-
-            c_prev, c_info, c_next, c_rot = st.columns([1, 2, 1, 1])
-            with c_prev:
-                if st.button("◀") and st.session_state.current_page > 0:
-                    st.session_state.current_page -= 1
-                    st.rerun()
-            with c_info:
-                st.markdown(f"<div style='text-align: center; margin-top: 5px;'>Strona {st.session_state.current_page + 1} / {total_pages}</div>", unsafe_allow_html=True)
-            with c_next:
-                if st.button("▶") and st.session_state.current_page < total_pages - 1:
-                    st.session_state.current_page += 1
-                    st.rerun()
+            st.subheader("Podgląd i Zapis")
             
-            page_num = st.session_state.current_page
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=120)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            fill_color = "#00000000" 
-            initial_drawing = st.session_state.page_annotations.get(page_num)
-
-            # Użycie streamlit-drawable-canvas (silnik JS) do rysowania na obrazie PDF
-            canvas_result = st_canvas(
-                fill_color=fill_color,
-                stroke_width=st.session_state.pdf_width,
-                stroke_color=st.session_state.pdf_color,
-                background_image=img,
-                update_streamlit=True,
-                height=img.height,
-                width=img.width,
-                drawing_mode=st.session_state.pdf_tool,
-                initial_drawing=initial_drawing,
-                key=f"canvas_{page_num}",
+            # 1. Wyświetlanie PDF (używamy wbudowanego wyświetlacza)
+            st.download_button(
+                label="👁️ Kliknij, aby wyświetlić oryginalny PDF",
+                data=st.session_state.pdf_bytes,
+                file_name=st.session_state.last_pdf,
+                mime="application/pdf"
             )
+            st.info("Streamlit nie osadza plików PDF natywnie. Kliknij, aby pobrać i wyświetlić w nowej karcie/programie.")
 
-            if canvas_result.json_data is not None:
-                st.session_state.page_annotations[page_num] = canvas_result.json_data
+            # 2. GENEROWANIE NOWEGO PDF
+            if st.button("💾 Zastosuj Adnotacje i Pobierz Nowy PDF"):
+                
+                if not st.session_state.current_pdf_annotations:
+                    st.warning("Nie dodano żadnych adnotacji do zastosowania.")
+                else:
+                    try:
+                        reader = PdfReader(io.BytesIO(st.session_state.pdf_bytes))
+                        writer = PdfWriter()
 
-            st.markdown("---")
-            if st.button("💾 Pobierz PDF z Adnotacjami"):
-                # POBIERANIE CAŁEGO DOKUMENTU (Wykorzystanie fitz/PyMuPDF do zapisu)
-                out_buffer = io.BytesIO()
-                # W wersji Streamlit to tylko placeholder, ponieważ brak backendu 
-                # do spłaszczania stron, ale zapisujemy oryginalny plik
-                doc.save(out_buffer)
-                st.download_button(
-                    label="📥 Kliknij aby pobrać (tylko plik bazowy)",
-                    data=out_buffer.getvalue(),
-                    file_name="edytowany_dokument.pdf",
-                    mime="application/pdf"
-                )
-                st.warning("Uwaga: Na platformach chmurowych spłaszczanie adnotacji na PDF jest skomplikowane i wymaga serwera. To jest tylko zapis pliku bazowego.")
+                        for i, page in enumerate(reader.pages):
+                            page_num = i + 1
+                            current_page = page
+                            
+                            # Filtrowanie adnotacji dla bieżącej strony
+                            annotations_to_add = [
+                                ann for ann in st.session_state.current_pdf_annotations 
+                                if ann['page'] == page_num
+                            ]
+                            
+                            if annotations_to_add:
+                                # Użycie reportlab do utworzenia warstwy z adnotacjami
+                                overlay_buffer = io.BytesIO()
+                                overlay_pdf = reportlab_canvas.Canvas(overlay_buffer, pagesize=letter)
+                                
+                                # ReportLab używa innego układu współrzędnych (dół-lewo)
+                                for ann in annotations_to_add:
+                                    # Y=0 to dół, Y=792 to góra (dla A4 letter)
+                                    overlay_pdf.setFont("Helvetica", ann['size'])
+                                    overlay_pdf.drawString(ann['x'], ann['y'], ann['text'])
+
+                                overlay_pdf.save()
+                                overlay_reader = PdfReader(overlay_buffer)
+                                
+                                # Scalenie oryginalnej strony z warstwą adnotacji
+                                current_page.merge_page(overlay_reader.pages[0])
+
+                            writer.add_page(current_page)
+                        
+                        final_buffer = io.BytesIO()
+                        writer.write(final_buffer)
+                        final_buffer.seek(0)
+
+                        st.download_button(
+                            label="📥 Pobierz Edytowany PDF",
+                            data=final_buffer.getvalue(),
+                            file_name=f"edytowany_{st.session_state.last_pdf}",
+                            mime="application/pdf"
+                        )
+                        st.success("PDF został wygenerowany z adnotacjami!")
+                        st.session_state.pdf_bytes = final_buffer.getvalue() # Załaduj nowy PDF do podglądu (opcjonalnie)
+                        st.session_state.current_pdf_annotations = []
+                        st.rerun() # Odśwież widok
+
+                    except Exception as e:
+                        st.error(f"Błąd podczas edycji PDF: {e}")
 
 # ==========================================
 # EKRAN STARTOWY
@@ -584,3 +608,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
