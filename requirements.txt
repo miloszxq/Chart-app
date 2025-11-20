@@ -7,3 +7,4 @@ matplotlib
 opencv-python
 pypdf
 streamlit-pdf-reader
+reportlab
